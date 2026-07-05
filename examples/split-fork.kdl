@@ -1,0 +1,38 @@
+// A split patch: humanized bass, octave-doubled treble, and a third voice
+// that answers loud playing with random high notes.
+//
+// The top level is an implicit chain, so the channel filter below runs
+// before the fork. Channels are written 1-16 here, as on the keyboard.
+
+input "Arturia"                      // match the first port containing "Arturia"
+output device="IAC Driver"           // send to an existing port instead of a virtual one
+
+only-channels 1                      // listen to the keyboard's main channel
+
+fork {
+    // Bass half: notes wander a few keys around what was played.
+    chain {
+        key-range lo=21 hi=59
+        loose-keys seed=7 sigma=3.5
+        channelize 2
+    }
+
+    // Treble half: doubled an octave up, velocities tamed.
+    chain {
+        key-range lo=60 hi=108
+        fork {
+            pass
+            transpose 12
+        }
+        velocity-curve gamma=1.4 ceiling=100
+        channelize 3
+    }
+
+    // Accents only: hard hits trigger a random note high on the keyboard.
+    chain {
+        notes-only
+        velocity-range lo=100 hi=127
+        loose-keys seed=11 lo=72 hi=96
+        channelize 4
+    }
+}

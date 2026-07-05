@@ -1,0 +1,11 @@
+// Scramble the keyboard, deterministically.
+//
+// Every note is remapped through a seeded shuffle of the 88 piano keys, so
+// the mapping is stable across runs but unguessable at the keyboard. A gentle
+// velocity curve keeps the dynamics playable.
+
+input "Roland"                       // optional: substring of the input port name
+output virtual="miditool Out"        // default if omitted; or: output device="IAC"
+
+shuffle-lock seed=42 lo=21 hi=108 mode="free"
+velocity-curve gamma=0.8

@@ -1,0 +1,17 @@
+[package]
+name = "miditool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "A MIDI mixing layer between your keyboard and your DAW"
+
+[dependencies]
+miditool-core.workspace = true
+miditool-effects.workspace = true
+miditool-io.workspace = true
+miditool-engine.workspace = true
+miditool-config.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+ctrlc.workspace = true

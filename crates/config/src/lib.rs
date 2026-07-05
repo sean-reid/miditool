@@ -28,6 +28,10 @@
 //! }
 //! ```
 //!
+//! Besides the built-in effects, a chain can hold a `script` node
+//! (`script "wedge.lua" seed=42`) that runs a Luau file on every event.
+//! The path stays verbatim in the spec; the CLI resolves and loads it.
+//!
 //! Parsing produces a plain [`Config`] of [`SceneSpec`] and [`EffectSpec`]
 //! values. This crate knows nothing about the runtime effect graph; the
 //! CLI maps specs onto `miditool-core` nodes.
@@ -211,6 +215,11 @@ pub enum EffectSpec {
         first: TimeSpec,
         curve: f32,
     },
+    /// Run a Luau script on every event: `script "wedge.lua" seed=42`.
+    /// The path is kept exactly as written; the CLI resolves it against
+    /// the config file's directory when it builds the graph, so parsing
+    /// never touches the filesystem.
+    Script { path: String, seed: u64 },
 }
 
 /// Everything that can go wrong between a path and a [`Config`].

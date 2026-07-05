@@ -236,4 +236,10 @@ pub(crate) enum Effect {
         #[knus(property)]
         curve: Option<f64>,
     },
+    Script {
+        #[knus(argument)]
+        path: String,
+        #[knus(property)]
+        seed: Option<u64>,
+    },
 }

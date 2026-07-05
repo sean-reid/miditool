@@ -361,6 +361,18 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
                 curve: curve as f32,
             }
         }
+        E::Script { path, seed } => {
+            if path.is_empty() {
+                return Err(ConfigError::invalid(
+                    "script",
+                    "the script path must not be empty",
+                ));
+            }
+            EffectSpec::Script {
+                path,
+                seed: seed.unwrap_or(0),
+            }
+        }
     })
 }
 

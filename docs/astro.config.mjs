@@ -54,6 +54,7 @@ export default defineConfig({
             { label: "Routing and filters", slug: "configuration/routing" },
             { label: "Time and tempo", slug: "configuration/time" },
             { label: "Seeds", slug: "configuration/seeds" },
+            { label: "Scripting", slug: "configuration/scripting" },
           ],
         },
         {

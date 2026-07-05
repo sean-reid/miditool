@@ -177,6 +177,36 @@ fn echoes_example_parses_exactly() {
 }
 
 #[test]
+fn scripted_example_parses_exactly() {
+    let config = parse(include_str!("../../../examples/scripted.kdl"));
+    assert_eq!(
+        config,
+        Config {
+            input: Some("Roland".to_owned()),
+            hide_input: false,
+            output: OutputSpec::Virtual("miditool Out".to_owned()),
+            tempo: 120.0,
+            remote: None,
+            scenes: vec![SceneSpec {
+                name: "wedge".to_owned(),
+                kill_on_exit: false,
+                chain: vec![
+                    EffectSpec::VelocityCurve {
+                        gamma: 0.8,
+                        floor: 1,
+                        ceiling: 127,
+                    },
+                    EffectSpec::Script {
+                        path: "wedge.lua".to_owned(),
+                        seed: 1,
+                    },
+                ],
+            }],
+        }
+    );
+}
+
+#[test]
 fn missing_output_defaults_to_virtual_port() {
     let config = parse("pass");
     assert_eq!(
@@ -926,6 +956,37 @@ fn stutter_range_errors() {
     assert!(msg.contains("curve") && msg.contains("0.25..=4.0"), "{msg}");
     let msg = parse_err("stutter first=\"30ms\" curve=5.0");
     assert!(msg.contains("0.25..=4.0") && msg.contains("5"), "{msg}");
+}
+
+#[test]
+fn script_parses_exactly() {
+    assert_eq!(
+        parse_chain("script \"wedge.lua\" seed=42"),
+        vec![EffectSpec::Script {
+            path: "wedge.lua".to_owned(),
+            seed: 42,
+        }]
+    );
+}
+
+#[test]
+fn script_seed_defaults_to_zero() {
+    assert_eq!(
+        parse_chain("script \"wedge.lua\""),
+        vec![EffectSpec::Script {
+            path: "wedge.lua".to_owned(),
+            seed: 0,
+        }]
+    );
+}
+
+#[test]
+fn empty_script_path_is_rejected() {
+    let msg = parse_err("script \"\"");
+    assert!(
+        msg.contains("script") && msg.contains("empty"),
+        "error should state the constraint: {msg}"
+    );
 }
 
 #[test]

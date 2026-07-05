@@ -110,6 +110,10 @@ effects
   stutter repeats=6 first=\"30ms\" curve=1.0
       Ratchet each note into a burst: gaps start at first, then stretch
       (curve above 1) or tighten (below 1) as the burst plays out.
+  script \"wedge.lua\" seed=0
+      Run a Luau script on every event: return nil to pass, false to
+      drop, a table (or an array of tables) to emit. The path resolves
+      against the config file. `miditool new script` writes a starter.
   pass / discard
       Identity and mute, mostly useful inside fork branches.
 
@@ -137,7 +141,8 @@ on this machine, and bind=\"0.0.0.0\" opens it to the local network.
 
 Time properties (time=, interval=, first=) take \"250ms\" or \"1.5s\", or
 beats=0.5 against the tempo. Randomness is deterministic: the same seed
-always gives the same result.
+always gives the same result. The script node's Lua API is documented at
+https://sean-reid.github.io/miditool/configuration/scripting/.
 ";
 
 #[cfg(test)]

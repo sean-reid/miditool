@@ -1,12 +1,13 @@
 ---
 title: CLI reference
-description: Every miditool subcommand, its synopsis, and the shape of its output. run, ports, monitor, effects, hide, unhide, bench, doctor.
+description: Every miditool subcommand, its synopsis, and the shape of its output. run, new, ports, monitor, effects, hide, unhide, bench, doctor.
 ---
 
 ```text
 miditool <command>
 
   run       Run an effect graph between an input port and an output port
+  new       Write a starter file: a config or a Luau script
   ports     List MIDI input and output ports
   monitor   Print incoming MIDI events from an input port
   effects   List the built-in effects and their parameters
@@ -29,6 +30,20 @@ miditool: Roland -> miditool Out (virtual). Ctrl-C to stop.
 ```
 
 If the config sets `hide=true`, the input is hidden after connecting and restored on exit; see [the GarageBand guide](/miditool/guides/garageband/).
+
+## miditool new
+
+```sh
+miditool new config [NAME]
+miditool new script <NAME>
+```
+
+Writes a starter file into the current directory and prints the next step. `new config` writes `NAME.kdl` (default `miditool.kdl`), a minimal commented config; `new script` writes `NAME.lua`, a runnable [Luau script](/miditool/configuration/scripting/) to edit from. Extensions are appended for you, and existing files are never overwritten.
+
+```text
+wrote wedge.lua
+next: add `script "wedge.lua" seed=1` to your config, then `miditool run`.
+```
 
 ## miditool ports
 

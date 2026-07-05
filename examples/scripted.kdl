@@ -1,0 +1,16 @@
+// A Luau script in the chain: wedge.lua mirrors the keyboard around
+// middle C, after a gentle velocity curve.
+//
+// The script path is resolved against this file's directory. The seed
+// feeds the script's rng() helpers; wedge.lua does not draw from it,
+// but it is part of the node so scripted randomness stays reproducible.
+
+input "Roland"                       // optional: substring of the input port name
+output virtual="miditool Out"        // default if omitted; or: output device="IAC"
+
+// remote port=8320 bind="0.0.0.0"   // uncomment to switch scenes from a phone
+
+scene "wedge" {
+    velocity-curve gamma=0.8
+    script "wedge.lua" seed=1
+}

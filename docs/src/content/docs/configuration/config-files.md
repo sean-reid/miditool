@@ -88,6 +88,8 @@ scene "echo storm" switch="kill" {
 
 `switch=` says what happens to sounding notes when you leave the scene: `"let-ring"` (the default) lets them ring out; `"kill"` cuts them. Scene names must be unique and non-empty, compared exactly as written, and every scene needs at least one effect.
 
+Anywhere an effect can go, `script "wedge.lua"` runs your own Luau code on every event, with the path resolved against the config file's directory; see [Scripting](/miditool/configuration/scripting/).
+
 Bare effects are shorthand for a single scene named `main`. The two styles do not mix; this is an error:
 
 ```kdl fail

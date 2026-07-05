@@ -3,6 +3,7 @@ mod bench;
 mod build;
 mod doctor;
 mod pretty;
+mod scaffold;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
@@ -27,6 +28,11 @@ enum Cmd {
     Run {
         /// Path to a KDL config. Defaults to ./miditool.kdl.
         config: Option<PathBuf>,
+    },
+    /// Write a starter file: a config or a Luau script.
+    New {
+        #[command(subcommand)]
+        what: NewWhat,
     },
     /// List MIDI input and output ports.
     Ports,
@@ -65,9 +71,28 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum NewWhat {
+    /// Write ./<NAME>.lua, a commented starter script.
+    Script {
+        /// Script name; ".lua" is appended unless already there.
+        name: String,
+    },
+    /// Write ./<NAME>.kdl, a minimal commented config.
+    Config {
+        /// Config name; defaults to "miditool", ".kdl" is appended
+        /// unless already there.
+        name: Option<String>,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Run { config } => run(config),
+        Cmd::New { what } => match what {
+            NewWhat::Script { name } => scaffold::script(&name),
+            NewWhat::Config { name } => scaffold::config(name.as_deref().unwrap_or("miditool")),
+        },
         Cmd::Ports => ports(),
         Cmd::Monitor { input } => monitor(input),
         Cmd::Effects => {
@@ -140,6 +165,13 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
 
     let target = build::output_target(cfg.output);
 
+    // Script paths resolve against the config file's directory, so a
+    // config runs the same from anywhere.
+    let base = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+
     // Scene specs live in a store shared by the scene builder and the
     // reload closure: edits to the config swap graphs in place while held
     // notes drain through the graph that opened them. Input and output
@@ -155,7 +187,7 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         let scene = scenes
             .get(idx)
             .ok_or_else(|| format!("no scene at index {idx}"))?;
-        Ok(build::build_graph(scene.chain.clone(), *tempo))
+        build::build_graph(scene.chain.clone(), *tempo, &base)
     });
 
     let reload_store = Arc::clone(&store);

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/sean-reid/miditool/compare/v0.1.0...v0.1.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* dispatch the binary build when a release is tagged ([fe111f3](https://github.com/sean-reid/miditool/commit/fe111f38adeb5e867bda5bb7ea932dfdbc305ad2))
+* upload release assets to the existing github release ([e559c24](https://github.com/sean-reid/miditool/commit/e559c2441386584b0695032f4b3fa3fec7d4d112))
+
 ## 0.1.0 (2026-07-05)
 
 

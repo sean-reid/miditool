@@ -1,0 +1,29 @@
+# Changelog
+
+## 0.1.0 (2026-07-05)
+
+
+### Features
+
+* cli with run, ports, monitor, and effects commands ([ea34b4f](https://github.com/sean-reid/miditool/commit/ea34b4ff697c37dc98374798a297fbbda2d272ea))
+* delay, echo, restrike, and stutter effects ([92a3c83](https://github.com/sean-reid/miditool/commit/92a3c8311e654266bf5d46e97e7eb5dec6431e7f))
+* founding effects with note-off routing ([1839e16](https://github.com/sean-reid/miditool/commit/1839e1691599b4551ecea1d133b17fad456f6704))
+* hide the raw input from other apps while running (macos) ([2921370](https://github.com/sean-reid/miditool/commit/2921370eda684e686859d68cc3037b0ab350bc2b))
+* kdl config format with examples ([b4d8ded](https://github.com/sean-reid/miditool/commit/b4d8ded3875d5e64004e0238b8fed940485329a9))
+* live scene switching with kill and let-ring exit policies ([8eb77e8](https://github.com/sean-reid/miditool/commit/8eb77e84cb70b863b102e0de03cf69d0c0ca32f1))
+* midi io layer and realtime engine pipeline ([9920955](https://github.com/sean-reid/miditool/commit/99209550afaa707688a5e954e5af1d430a75061a))
+* realtime scheduler with hot reload and note draining ([c22869c](https://github.com/sean-reid/miditool/commit/c22869c76822b98feba2e1fa58a08e92025bcae6))
+* release pipeline with versioning, changelog, and installers ([83db617](https://github.com/sean-reid/miditool/commit/83db6172e420510b44c526748993913e470d5d93))
+* scene blocks and remote node in config ([bf5a16e](https://github.com/sean-reid/miditool/commit/bf5a16eb1639949e8e0582b6622b811475377962))
+* support windows via winmm and loopmidi ([8597dc1](https://github.com/sean-reid/miditool/commit/8597dc100f5278723092484e8e80d7502e94c8a9))
+* tempo node and duration syntax in config ([a394421](https://github.com/sean-reid/miditool/commit/a394421c2ad182afd8c89455875cd70f7004ee45))
+* web remote with scene switching, live monitor, and panic ([65d98a9](https://github.com/sean-reid/miditool/commit/65d98a990f781c0e584eaa1f456a29028e171ccc))
+* wire scenes and the web remote into run ([e1ce02c](https://github.com/sean-reid/miditool/commit/e1ce02c8835fce3431f4f20c2eedb65124fede04))
+* wire scheduler and hot reload into run, add bench and doctor ([9a6e1e2](https://github.com/sean-reid/miditool/commit/9a6e1e2636b6814af57e1eab3cd7da16f6d40f0f))
+* workspace scaffold and core event/graph model ([d714f54](https://github.com/sean-reid/miditool/commit/d714f54e9d8a5d828ef4b427504473f54942e3f1))
+
+
+### Bug Fixes
+
+* astro 7 needs node 22 in the docs build ([ba01cb1](https://github.com/sean-reid/miditool/commit/ba01cb10bbaf36ab3690889d5ca6be9eb6bf664c))
+* deflake scheduler timing tests, add dbus headers to linux ci ([8664d24](https://github.com/sean-reid/miditool/commit/8664d245f6b2b13650d74ac5f9cc441141223065))

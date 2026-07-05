@@ -7,7 +7,19 @@ miditool sits between your MIDI keyboard and your DAW. You describe a transforma
 
 ## Install
 
-For now, build from source with a Rust toolchain ([rustup.rs](https://rustup.rs) if you need one):
+On macOS or Linux (including a Raspberry Pi):
+
+```sh
+curl -fsSL https://github.com/sean-reid/miditool/releases/latest/download/miditool-installer.sh | sh
+```
+
+On Windows (PowerShell):
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/sean-reid/miditool/releases/latest/download/miditool-installer.ps1 | iex"
+```
+
+Or build from source with a Rust toolchain ([rustup.rs](https://rustup.rs) if you need one):
 
 ```sh
 git clone https://github.com/sean-reid/miditool
@@ -15,7 +27,7 @@ cd miditool
 cargo install --path crates/cli
 ```
 
-Prebuilt binaries are coming. Check `miditool --version` to confirm the install.
+Check `miditool --version` to confirm the install.
 
 ## Find your keyboard
 

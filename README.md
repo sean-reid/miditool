@@ -8,15 +8,17 @@ Built for live performance on an 88-key piano: the processing path is allocation
 
 ## Status
 
-Early. The engine core, the first effects, and the CLI work. Much more is planned: scenes, delay and echo lines, a phone remote, scriptable effects, and a large catalog of effects drawn from 20th century composition techniques.
+Early but real: the engine, nine effects, scenes, hot reload, and the phone remote all work. Much more is planned, including scriptable effects and a large catalog drawn from 20th century composition techniques.
 
 ## Quick start
 
 ```sh
-cargo install --path crates/cli
+curl -fsSL https://github.com/sean-reid/miditool/releases/latest/download/miditool-installer.sh | sh
 miditool ports                  # find your keyboard
 miditool run examples/scrambled.kdl
 ```
+
+Windows and from-source instructions are in the [docs](https://sean-reid.github.io/miditool/getting-started/).
 
 A config is a KDL file describing an effect chain:
 

@@ -64,7 +64,10 @@ export default defineConfig({
         },
         {
           label: "Reference",
-          items: [{ label: "CLI", slug: "reference/cli" }],
+          items: [
+            { label: "CLI", slug: "reference/cli" },
+            { label: "Releasing", slug: "reference/releasing" },
+          ],
         },
       ],
     }),

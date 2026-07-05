@@ -11,10 +11,11 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0" # x-release-please-version
 edition = "2024"
 license = "MIT"
 authors = ["Sean Reid <seanreid.mail@gmail.com>"]
+repository = "https://github.com/sean-reid/miditool"
 
 [workspace.dependencies]
 miditool-core = { path = "crates/core" }
@@ -51,3 +52,8 @@ futures-util = "0.3"
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

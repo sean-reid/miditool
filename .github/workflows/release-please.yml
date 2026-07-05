@@ -1,0 +1,44 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      prs_created: ${{ steps.rp.outputs.prs_created }}
+      pr: ${{ steps.rp.outputs.pr }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The version bump lands in Cargo.toml; the lockfile must follow so
+  # release builds with --locked succeed.
+  lockfile:
+    needs: release-please
+    if: needs.release-please.outputs.prs_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ fromJson(needs.release-please.outputs.pr).headBranchName }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Refresh the lockfile
+        run: cargo update --workspace
+      - name: Commit if changed
+        run: |
+          if ! git diff --quiet Cargo.lock; then
+            git config user.name "Sean Reid"
+            git config user.email "seanreid.mail@gmail.com"
+            git add Cargo.lock
+            git commit -m "chore: refresh lockfile"
+            git push
+          fi

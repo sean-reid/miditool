@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.2](https://github.com/sean-reid/miditool/compare/v0.1.1...v0.1.2) (2026-07-05)
+
+
+### Features
+
+* remote binds loopback by default with a bind option and connection cap ([2f6d5e7](https://github.com/sean-reid/miditool/commit/2f6d5e71cdada3f89d1a31049aa5ddce67426014))
+
+
+### Bug Fixes
+
+* fork merges deleted delayed copies, silence stopped at one buffer, pairs could split ([2b8ee9c](https://github.com/sean-reid/miditool/commit/2b8ee9cab3b8a43aa0870b41abba655f2da325ff))
+* let the newest docs deploy supersede a queued one ([76e4da2](https://github.com/sean-reid/miditool/commit/76e4da2b38a18fb84967b37a485f1baf85219f35))
+* pedal release, aftertouch routing, sysex passthrough, and reload race ([9f31f48](https://github.com/sean-reid/miditool/commit/9f31f4859170426f75573116666ccf64663eb17f))
+* remote and cli polish from the ux audit ([3c6b1a8](https://github.com/sean-reid/miditool/commit/3c6b1a8261661277123092557335184cf5b8c128))
+
 ## [0.1.1](https://github.com/sean-reid/miditool/compare/v0.1.0...v0.1.1) (2026-07-05)
 
 

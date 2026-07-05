@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.3](https://github.com/sean-reid/miditool/compare/v0.1.2...v0.1.3) (2026-07-05)
+
+
+### Features
+
+* luau scripting engine with sandboxing and fail-open safety ([444da3b](https://github.com/sean-reid/miditool/commit/444da3be7a0f75d7d19b6c45a54eac260c367f2d))
+* script config node, new command, and scripting guide ([d7d4447](https://github.com/sean-reid/miditool/commit/d7d444714ca4537613dd9a9b479eb692b17bb1aa))
+
+
+### Bug Fixes
+
+* retry a rejected pages deployment once ([33847ba](https://github.com/sean-reid/miditool/commit/33847bae9299201306167024fbcda0462e4ceecc))
+
 ## [0.1.2](https://github.com/sean-reid/miditool/compare/v0.1.1...v0.1.2) (2026-07-05)
 
 

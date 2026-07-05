@@ -15,25 +15,43 @@
 
 mod router;
 
+pub mod aggregate_gate;
+pub mod blocked_keys;
 pub mod channelize;
 pub mod delay;
 pub mod echo;
+pub mod klangfarben;
 pub mod loose_keys;
+pub mod registral_scatter;
 pub mod restrike;
+pub mod ring_mod;
+pub mod row_snap;
 pub mod shuffle_lock;
+pub mod sieve_quantizer;
 pub mod stutter;
+pub mod telescope;
 pub mod transpose;
 pub mod velocity_curve;
+pub mod wedge_mirror;
 
+pub use aggregate_gate::AggregateGate;
+pub use blocked_keys::BlockedKeys;
 pub use channelize::Channelize;
 pub use delay::Delay;
 pub use echo::Echo;
+pub use klangfarben::Klangfarben;
 pub use loose_keys::{KeyDist, LooseKeys};
+pub use registral_scatter::RegistralScatter;
 pub use restrike::Restrike;
+pub use ring_mod::RingMod;
+pub use row_snap::{RowForm, RowSnap};
 pub use shuffle_lock::{ShuffleLock, ShuffleMode};
+pub use sieve_quantizer::{SieveQuantizer, SieveSnap};
 pub use stutter::Stutter;
+pub use telescope::Telescope;
 pub use transpose::Transpose;
 pub use velocity_curve::VelocityCurve;
+pub use wedge_mirror::WedgeMirror;
 
 #[cfg(test)]
 pub(crate) mod testutil {

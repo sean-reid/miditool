@@ -8,6 +8,7 @@ pub mod event;
 pub mod graph;
 pub mod notemap;
 pub mod rng;
+pub mod sieve;
 pub mod tracker;
 pub mod wire;
 
@@ -15,4 +16,5 @@ pub use event::{Event, EventKind, Timestamp};
 pub use graph::{Effect, EventBuf, Filter, MAX_FANOUT, Node, ProcCx};
 pub use notemap::PerNote;
 pub use rng::Prng;
+pub use sieve::Sieve;
 pub use tracker::NoteTracker;

@@ -3,10 +3,13 @@
 
 use std::sync::atomic::Ordering;
 
-use miditool_core::{Effect, Event, EventBuf, EventKind, MAX_FANOUT, Node, NoteTracker, ProcCx};
+use miditool_core::{
+    Effect, Event, EventBuf, EventKind, MAX_FANOUT, Node, NoteTracker, ProcCx, Sieve,
+};
 use miditool_effects::{
-    Channelize, Delay, Echo, KeyDist, LooseKeys, Restrike, ShuffleLock, ShuffleMode, Stutter,
-    Transpose, VelocityCurve,
+    AggregateGate, BlockedKeys, Channelize, Delay, Echo, KeyDist, Klangfarben, LooseKeys,
+    RegistralScatter, Restrike, RingMod, RowForm, RowSnap, ShuffleLock, ShuffleMode,
+    SieveQuantizer, SieveSnap, Stutter, Telescope, Transpose, VelocityCurve, WedgeMirror,
 };
 use proptest::prelude::*;
 
@@ -38,6 +41,38 @@ fn modes() -> impl Strategy<Value = ShuffleMode> {
         Just(ShuffleMode::WithinOctave),
         Just(ShuffleMode::WithinPitchClass),
     ]
+}
+
+fn forms() -> impl Strategy<Value = RowForm> {
+    prop_oneof![
+        Just(RowForm::Prime),
+        Just(RowForm::Inversion),
+        Just(RowForm::Retrograde),
+        Just(RowForm::RetrogradeInversion),
+    ]
+}
+
+fn snaps() -> impl Strategy<Value = SieveSnap> {
+    prop_oneof![
+        Just(SieveSnap::Nearest),
+        Just(SieveSnap::Up),
+        Just(SieveSnap::Down),
+        Just(SieveSnap::Drop),
+    ]
+}
+
+fn rows() -> impl Strategy<Value = [u8; 12]> {
+    Just((0u8..12).collect::<Vec<u8>>())
+        .prop_shuffle()
+        .prop_map(|row| std::array::from_fn(|i| row[i]))
+}
+
+/// A single-atom sieve `m@r`; enough to exercise every snap mode,
+/// including the drop-at-the-edges paths of `Up` and `Down`.
+fn sieves() -> impl Strategy<Value = Sieve> {
+    (1u8..=127)
+        .prop_flat_map(|m| (Just(m), 0..m))
+        .prop_map(|(m, r)| Sieve::parse(&format!("{m}@{r}")).expect("a valid atom"))
 }
 
 /// Append a note-off per outstanding note-on. A stateless effect cannot end
@@ -202,6 +237,85 @@ proptest! {
     ) {
         let fx = Stutter::new(repeats, gap, curve);
         assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    #[test]
+    fn registral_scatter_no_orphans(
+        steps in steps(),
+        seed: u64,
+        lo in 0u8..128,
+        hi in 0u8..128,
+    ) {
+        assert_no_orphans(&mut leaf(RegistralScatter::new(seed, lo, hi)), &steps);
+    }
+
+    #[test]
+    fn wedge_mirror_no_orphans(
+        steps in steps(),
+        seed: u64,
+        axis in 0u8..128,
+        probability in 0.0f32..=1.0,
+    ) {
+        assert_no_orphans(&mut leaf(WedgeMirror::new(axis, probability, seed)), &steps);
+    }
+
+    #[test]
+    fn blocked_keys_no_orphans(
+        steps in steps(),
+        items in prop::collection::vec(0u8..128, 0..16),
+        by_class: bool,
+    ) {
+        assert_no_orphans(&mut leaf(BlockedKeys::new(&items, by_class)), &steps);
+    }
+
+    #[test]
+    fn klangfarben_no_orphans(
+        steps in steps(),
+        seed: u64,
+        channels in prop::collection::vec(0u8..16, 1..8),
+        random: bool,
+    ) {
+        assert_no_orphans(&mut leaf(Klangfarben::new(&channels, random, seed)), &steps);
+    }
+
+    #[test]
+    fn ring_mod_no_orphans(
+        steps in steps(),
+        carrier in 0u8..128,
+        sum: bool,
+        diff: bool,
+        dry: bool,
+    ) {
+        assert_no_orphans(&mut leaf(RingMod::new(carrier, sum, diff, dry)), &steps);
+    }
+
+    #[test]
+    fn telescope_no_orphans(
+        steps in steps(),
+        factor in -4.0f32..=4.0,
+        reference in 0u8..128,
+    ) {
+        assert_no_orphans(&mut leaf(Telescope::new(factor, reference)), &steps);
+    }
+
+    #[test]
+    fn row_snap_no_orphans(
+        steps in steps(),
+        row in rows(),
+        form in forms(),
+        transpose in -12i8..=12,
+    ) {
+        assert_no_orphans(&mut leaf(RowSnap::new(row, form, transpose)), &steps);
+    }
+
+    #[test]
+    fn aggregate_gate_no_orphans(steps in steps(), leak in 0.0f32..=1.0, seed: u64) {
+        assert_no_orphans(&mut leaf(AggregateGate::new(leak, seed)), &steps);
+    }
+
+    #[test]
+    fn sieve_quantizer_no_orphans(steps in steps(), sieve in sieves(), snap in snaps()) {
+        assert_no_orphans(&mut leaf(SieveQuantizer::new(sieve, snap)), &steps);
     }
 
     // Echo repeats stay small here: Transpose's flush emits one note-off

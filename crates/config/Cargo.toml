@@ -10,3 +10,6 @@ description = "KDL configuration for miditool"
 knus.workspace = true
 miette.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+pulldown-cmark.workspace = true

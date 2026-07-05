@@ -15,6 +15,9 @@ pub(crate) struct Document {
     /// `output virtual="Name"` or `output device="substring"`
     #[knus(child)]
     pub output: Option<Output>,
+    /// `tempo 96`
+    #[knus(child)]
+    pub tempo: Option<Tempo>,
     /// The implicit top-level chain.
     #[knus(children)]
     pub effects: Vec<Effect>,
@@ -38,6 +41,55 @@ pub(crate) struct Output {
     pub virtual_: Option<String>,
     #[knus(property)]
     pub device: Option<String>,
+}
+
+/// The `tempo` node: beats per minute for `beats=` times.
+#[derive(Debug, knus::Decode)]
+pub(crate) struct Tempo {
+    #[knus(argument)]
+    pub bpm: Number,
+}
+
+/// A numeric scalar decoded from an integer or a decimal literal.
+///
+/// knus decodes `f64` from decimal literals only, which would make
+/// `tempo 96` a type error while `tempo 96.0` parses. Values that are
+/// naturally written either way go through this wrapper instead.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Number(pub f64);
+
+impl<S: knus::traits::ErrorSpan> knus::traits::DecodeScalar<S> for Number {
+    fn type_check(
+        _type_name: &Option<knus::span::Spanned<knus::ast::TypeName, S>>,
+        _ctx: &mut knus::decode::Context<S>,
+    ) {
+    }
+
+    fn raw_decode(
+        value: &knus::span::Spanned<knus::ast::Literal, S>,
+        ctx: &mut knus::decode::Context<S>,
+    ) -> Result<Self, knus::errors::DecodeError<S>> {
+        use knus::ast::Literal;
+        type DynError = Box<dyn std::error::Error + Send + Sync>;
+        let parsed: Result<f64, DynError> = match &**value {
+            Literal::Int(v) => i64::try_from(v).map(|v| v as f64).map_err(Into::into),
+            Literal::Decimal(v) => f64::try_from(v).map_err(Into::into),
+            _ => {
+                ctx.emit_error(knus::errors::DecodeError::scalar_kind(
+                    knus::decode::Kind::Decimal,
+                    value,
+                ));
+                return Ok(Number(0.0));
+            }
+        };
+        match parsed {
+            Ok(v) => Ok(Number(v)),
+            Err(e) => {
+                ctx.emit_error(knus::errors::DecodeError::conversion(value, e));
+                Ok(Number(0.0))
+            }
+        }
+    }
 }
 
 /// One effect node. Variant names decode from kebab-case node names, so
@@ -108,4 +160,48 @@ pub(crate) enum Effect {
     },
     NotesOnly,
     ControllersOnly,
+    Delay {
+        #[knus(property)]
+        time: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+    },
+    Echo {
+        #[knus(property)]
+        repeats: Option<i64>,
+        #[knus(property)]
+        time: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        decay: Option<f64>,
+        #[knus(property)]
+        transpose: Option<i64>,
+    },
+    Restrike {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        interval: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        jitter: Option<f64>,
+        #[knus(property)]
+        decay: Option<f64>,
+        #[knus(property)]
+        floor: Option<i64>,
+        #[knus(property)]
+        max: Option<i64>,
+    },
+    Stutter {
+        #[knus(property)]
+        repeats: Option<i64>,
+        #[knus(property)]
+        first: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        curve: Option<f64>,
+    },
 }

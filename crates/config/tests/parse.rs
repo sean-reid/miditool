@@ -1,7 +1,7 @@
 //! End-to-end tests for the public parsing API: the shipped examples, the
 //! documented defaults, and the validation errors.
 
-use miditool_config::{Config, EffectSpec, OutputSpec, ShuffleMode, parse_str};
+use miditool_config::{Config, EffectSpec, OutputSpec, ShuffleMode, TimeSpec, parse_str};
 
 fn parse(text: &str) -> Config {
     parse_str("test.kdl", text).expect("config should parse")
@@ -22,6 +22,7 @@ fn scrambled_example_parses_exactly() {
             input: Some("Roland".to_owned()),
             hide_input: false,
             output: OutputSpec::Virtual("miditool Out".to_owned()),
+            tempo: 120.0,
             chain: vec![
                 EffectSpec::ShuffleLock {
                     seed: 42,
@@ -48,6 +49,7 @@ fn split_fork_example_parses_exactly() {
             input: Some("Arturia".to_owned()),
             hide_input: false,
             output: OutputSpec::Device("IAC Driver".to_owned()),
+            tempo: 120.0,
             chain: vec![
                 EffectSpec::OnlyChannels(vec![0]),
                 EffectSpec::Fork(vec![
@@ -89,6 +91,36 @@ fn split_fork_example_parses_exactly() {
 }
 
 #[test]
+fn echoes_example_parses_exactly() {
+    let config = parse(include_str!("../../../examples/echoes.kdl"));
+    assert_eq!(
+        config,
+        Config {
+            input: Some("Roland".to_owned()),
+            hide_input: false,
+            output: OutputSpec::Virtual("miditool Echoes".to_owned()),
+            tempo: 96.0,
+            chain: vec![
+                EffectSpec::Echo {
+                    repeats: 4,
+                    time: TimeSpec::Beats(0.5),
+                    decay: 0.7,
+                    transpose: 0,
+                },
+                EffectSpec::Restrike {
+                    seed: 9,
+                    interval: TimeSpec::Millis(2000.0),
+                    jitter: 0.2,
+                    decay: 0.7,
+                    floor: 8,
+                    max: 12,
+                },
+            ],
+        }
+    );
+}
+
+#[test]
 fn missing_output_defaults_to_virtual_port() {
     let config = parse("pass");
     assert_eq!(
@@ -107,6 +139,7 @@ fn empty_document_is_a_valid_config() {
             input: None,
             hide_input: false,
             output: OutputSpec::Virtual("miditool Out".to_owned()),
+            tempo: 120.0,
             chain: vec![],
         }
     );
@@ -330,4 +363,296 @@ fn output_requires_exactly_one_property() {
 fn duplicate_input_is_rejected() {
     let msg = parse_err("input \"A\"\ninput \"B\"");
     assert!(msg.contains("input"), "error should name the node: {msg}");
+}
+
+#[test]
+fn tempo_defaults_to_120() {
+    assert_eq!(parse("pass").tempo, 120.0);
+}
+
+#[test]
+fn tempo_node_accepts_integers_and_decimals() {
+    assert_eq!(parse("tempo 96").tempo, 96.0);
+    assert_eq!(parse("tempo 93.5").tempo, 93.5);
+}
+
+#[test]
+fn tempo_out_of_range_is_rejected() {
+    let msg = parse_err("tempo 10");
+    assert!(
+        msg.contains("tempo") && msg.contains("20..=400") && msg.contains("10"),
+        "error should name the node, the range, and the value: {msg}"
+    );
+    let msg = parse_err("tempo 500");
+    assert!(msg.contains("20..=400"), "upper bound: {msg}");
+}
+
+#[test]
+fn duration_strings_in_ms_and_s() {
+    let config = parse(
+        "delay time=\"250ms\"\n\
+         delay time=\"1.5s\"\n\
+         delay time=\"2s\"\n\
+         delay time=\"0.5ms\"",
+    );
+    assert_eq!(
+        config.chain,
+        vec![
+            EffectSpec::Delay {
+                time: TimeSpec::Millis(250.0)
+            },
+            EffectSpec::Delay {
+                time: TimeSpec::Millis(1500.0)
+            },
+            EffectSpec::Delay {
+                time: TimeSpec::Millis(2000.0)
+            },
+            EffectSpec::Delay {
+                time: TimeSpec::Millis(0.5)
+            },
+        ]
+    );
+}
+
+#[test]
+fn delay_accepts_beats() {
+    let config = parse("delay beats=0.5");
+    assert_eq!(
+        config.chain,
+        vec![EffectSpec::Delay {
+            time: TimeSpec::Beats(0.5)
+        }]
+    );
+}
+
+#[test]
+fn beats_accept_integers() {
+    let config = parse("delay beats=1");
+    assert_eq!(
+        config.chain,
+        vec![EffectSpec::Delay {
+            time: TimeSpec::Beats(1.0)
+        }]
+    );
+}
+
+#[test]
+fn bad_duration_suffixes_are_rejected() {
+    let msg = parse_err("delay time=\"250us\"");
+    assert!(
+        msg.contains("delay") && msg.contains("250us") && msg.contains("250ms"),
+        "error should name the node, the value, and an example: {msg}"
+    );
+    let msg = parse_err("delay time=\"250\"");
+    assert!(msg.contains("250"), "missing suffix: {msg}");
+    let msg = parse_err("delay time=\"fastms\"");
+    assert!(msg.contains("fastms"), "non-numeric: {msg}");
+    let msg = parse_err("delay time=\"1.2.3s\"");
+    assert!(msg.contains("1.2.3s"), "malformed decimal: {msg}");
+    let msg = parse_err("delay time=\"1e3ms\"");
+    assert!(msg.contains("1e3ms"), "exponents are not durations: {msg}");
+}
+
+#[test]
+fn zero_duration_is_rejected() {
+    let msg = parse_err("delay time=\"0ms\"");
+    assert!(
+        msg.contains("positive") && msg.contains("0ms"),
+        "error should state the constraint: {msg}"
+    );
+}
+
+#[test]
+fn negative_beats_are_rejected() {
+    let msg = parse_err("delay beats=-1.0");
+    assert!(
+        msg.contains("beats") && msg.contains("greater than 0"),
+        "error should state the constraint: {msg}"
+    );
+}
+
+#[test]
+fn time_and_beats_are_mutually_exclusive() {
+    let msg = parse_err("delay time=\"1s\" beats=1.0");
+    assert!(
+        msg.contains("mutually exclusive"),
+        "error should state the conflict: {msg}"
+    );
+    let msg = parse_err("restrike seed=1 interval=\"1s\" beats=1.0");
+    assert!(
+        msg.contains("interval") && msg.contains("mutually exclusive"),
+        "error should use the node's property name: {msg}"
+    );
+}
+
+#[test]
+fn delay_requires_a_time() {
+    let msg = parse_err("delay");
+    assert!(
+        msg.contains("time") && msg.contains("beats"),
+        "error should offer both forms: {msg}"
+    );
+}
+
+#[test]
+fn echo_defaults() {
+    let config = parse("echo time=\"300ms\"");
+    assert_eq!(
+        config.chain,
+        vec![EffectSpec::Echo {
+            repeats: 3,
+            time: TimeSpec::Millis(300.0),
+            decay: 0.6,
+            transpose: 0,
+        }]
+    );
+}
+
+#[test]
+fn echo_full_form() {
+    let config = parse("echo repeats=4 time=\"300ms\" decay=0.7 transpose=-12");
+    assert_eq!(
+        config.chain,
+        vec![EffectSpec::Echo {
+            repeats: 4,
+            time: TimeSpec::Millis(300.0),
+            decay: 0.7,
+            transpose: -12,
+        }]
+    );
+}
+
+#[test]
+fn echo_decay_of_one_is_allowed() {
+    let config = parse("echo time=\"300ms\" decay=1.0");
+    assert!(matches!(
+        config.chain[0],
+        EffectSpec::Echo { decay, .. } if decay == 1.0
+    ));
+}
+
+#[test]
+fn echo_range_errors() {
+    let msg = parse_err("echo repeats=0 time=\"300ms\"");
+    assert!(msg.contains("echo") && msg.contains("1..=16"), "{msg}");
+    let msg = parse_err("echo repeats=17 time=\"300ms\"");
+    assert!(msg.contains("1..=16") && msg.contains("17"), "{msg}");
+    let msg = parse_err("echo time=\"300ms\" decay=0.0");
+    assert!(
+        msg.contains("decay") && msg.contains("greater than 0"),
+        "{msg}"
+    );
+    let msg = parse_err("echo time=\"300ms\" decay=1.5");
+    assert!(msg.contains("at most 1"), "{msg}");
+    let msg = parse_err("echo time=\"300ms\" transpose=25");
+    assert!(msg.contains("-24..=24") && msg.contains("25"), "{msg}");
+}
+
+#[test]
+fn restrike_defaults() {
+    let config = parse("restrike seed=1 interval=\"2s\"");
+    assert_eq!(
+        config.chain,
+        vec![EffectSpec::Restrike {
+            seed: 1,
+            interval: TimeSpec::Millis(2000.0),
+            jitter: 0.15,
+            decay: 0.7,
+            floor: 8,
+            max: 12,
+        }]
+    );
+}
+
+#[test]
+fn restrike_full_form_with_beats() {
+    let config = parse("restrike seed=1 beats=2.0 jitter=0.2 decay=0.75 floor=10 max=4");
+    assert_eq!(
+        config.chain,
+        vec![EffectSpec::Restrike {
+            seed: 1,
+            interval: TimeSpec::Beats(2.0),
+            jitter: 0.2,
+            decay: 0.75,
+            floor: 10,
+            max: 4,
+        }]
+    );
+}
+
+#[test]
+fn restrike_requires_a_seed() {
+    let msg = parse_err("restrike interval=\"2s\"");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn restrike_range_errors() {
+    let msg = parse_err("restrike seed=1 interval=\"2s\" jitter=1.0");
+    assert!(msg.contains("jitter") && msg.contains("0..=0.9"), "{msg}");
+    let msg = parse_err("restrike seed=1 interval=\"2s\" decay=1.0");
+    assert!(
+        msg.contains("decay") && msg.contains("less than 1"),
+        "{msg}"
+    );
+    let msg = parse_err("restrike seed=1 interval=\"2s\" floor=0");
+    assert!(msg.contains("floor") && msg.contains("1..=127"), "{msg}");
+    let msg = parse_err("restrike seed=1 interval=\"2s\" max=25");
+    assert!(msg.contains("max") && msg.contains("1..=24"), "{msg}");
+}
+
+#[test]
+fn stutter_defaults() {
+    let config = parse("stutter first=\"30ms\"");
+    assert_eq!(
+        config.chain,
+        vec![EffectSpec::Stutter {
+            repeats: 6,
+            first: TimeSpec::Millis(30.0),
+            curve: 1.0,
+        }]
+    );
+}
+
+#[test]
+fn stutter_full_form() {
+    let config = parse("stutter repeats=8 first=\"30ms\" curve=1.4");
+    assert_eq!(
+        config.chain,
+        vec![EffectSpec::Stutter {
+            repeats: 8,
+            first: TimeSpec::Millis(30.0),
+            curve: 1.4,
+        }]
+    );
+}
+
+#[test]
+fn stutter_range_errors() {
+    let msg = parse_err("stutter repeats=25 first=\"30ms\"");
+    assert!(msg.contains("stutter") && msg.contains("1..=24"), "{msg}");
+    let msg = parse_err("stutter first=\"30ms\" curve=0.1");
+    assert!(msg.contains("curve") && msg.contains("0.25..=4.0"), "{msg}");
+    let msg = parse_err("stutter first=\"30ms\" curve=5.0");
+    assert!(msg.contains("0.25..=4.0") && msg.contains("5"), "{msg}");
+}
+
+#[test]
+fn to_nanos_resolves_millis_independently_of_tempo() {
+    assert_eq!(TimeSpec::Millis(250.0).to_nanos(120.0), 250_000_000);
+    assert_eq!(TimeSpec::Millis(250.0).to_nanos(33.3), 250_000_000);
+    assert_eq!(TimeSpec::Millis(1500.0).to_nanos(120.0), 1_500_000_000);
+    assert_eq!(TimeSpec::Millis(0.5).to_nanos(120.0), 500_000);
+}
+
+#[test]
+fn to_nanos_resolves_beats_against_the_tempo() {
+    assert_eq!(TimeSpec::Beats(1.0).to_nanos(120.0), 500_000_000);
+    assert_eq!(TimeSpec::Beats(2.0).to_nanos(60.0), 2_000_000_000);
+    // Half a beat at 90 bpm is a third of a second, rounded to the
+    // nearest nanosecond.
+    assert_eq!(TimeSpec::Beats(0.5).to_nanos(90.0), 333_333_333);
 }

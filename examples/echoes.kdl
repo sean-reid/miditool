@@ -1,0 +1,13 @@
+// Ambient echoes: every note trails off in fading repeats, and notes you
+// hold down get gently re-struck on a loose two-second pulse.
+//
+// Times are written either as durations ("300ms", "1.5s") or as beats
+// against the tempo below.
+
+input "Roland"
+output virtual="miditool Echoes"
+
+tempo 96                             // beats= times below follow this
+
+echo repeats=4 beats=0.5 decay=0.7   // fading repeats every half beat
+restrike seed=9 interval="2s" jitter=0.2

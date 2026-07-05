@@ -36,6 +36,9 @@ pub struct Config {
     pub hide_input: bool,
     /// Where processed events go.
     pub output: OutputSpec,
+    /// Beats per minute, from the top-level `tempo` node; resolves the
+    /// `beats=` form of [`TimeSpec`]. Defaults to 120.
+    pub tempo: f32,
     /// Top-level effects, run in series.
     pub chain: Vec<EffectSpec>,
 }
@@ -50,6 +53,31 @@ pub enum OutputSpec {
     Virtual(String),
     /// Connect to an existing port whose name contains this substring.
     Device(String),
+}
+
+/// A duration, absolute or tempo-relative.
+///
+/// Time-based effects write either a duration string (`time="250ms"`,
+/// `time="1.5s"`) or a beat count (`beats=0.5`). The spec keeps the
+/// distinction; [`TimeSpec::to_nanos`] resolves it against the config's
+/// tempo when the graph is built.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TimeSpec {
+    /// An absolute time in milliseconds.
+    Millis(f64),
+    /// A count of beats; one beat lasts `60 / bpm` seconds.
+    Beats(f64),
+}
+
+impl TimeSpec {
+    /// Resolve to nanoseconds at the given tempo. Only the `Beats` form
+    /// consults the tempo.
+    pub fn to_nanos(self, tempo_bpm: f32) -> u64 {
+        match self {
+            TimeSpec::Millis(ms) => (ms * 1e6).round() as u64,
+            TimeSpec::Beats(beats) => (beats * 60e9 / tempo_bpm as f64).round() as u64,
+        }
+    }
 }
 
 /// How `shuffle-lock` is allowed to permute keys.
@@ -106,6 +134,34 @@ pub enum EffectSpec {
     NotesOnly,
     /// Pass only controller events.
     ControllersOnly,
+    /// Hold every event back by a fixed time.
+    Delay { time: TimeSpec },
+    /// Repeat each note `repeats` times, `time` apart, each repeat
+    /// `decay` times softer and shifted by `transpose` semitones.
+    Echo {
+        repeats: u8,
+        time: TimeSpec,
+        decay: f32,
+        transpose: i16,
+    },
+    /// Re-strike held notes on a jittered interval, each strike `decay`
+    /// times softer, never below velocity `floor`, at most `max` times
+    /// per note.
+    Restrike {
+        seed: u64,
+        interval: TimeSpec,
+        jitter: f32,
+        decay: f32,
+        floor: u8,
+        max: u8,
+    },
+    /// Ratchet each note-on into a burst of `repeats` hits: the first
+    /// gap lasts `first`, later gaps scale by `curve`.
+    Stutter {
+        repeats: u8,
+        first: TimeSpec,
+        curve: f32,
+    },
 }
 
 /// Everything that can go wrong between a path and a [`Config`].

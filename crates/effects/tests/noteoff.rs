@@ -1,9 +1,12 @@
 //! No effect may orphan a note: after an arbitrary sequence of note-ons and
 //! note-offs plus a flush, nothing is left sounding at the output.
 
-use miditool_core::{Effect, Event, EventBuf, EventKind, Node, NoteTracker, ProcCx};
+use std::sync::atomic::Ordering;
+
+use miditool_core::{Effect, Event, EventBuf, EventKind, MAX_FANOUT, Node, NoteTracker, ProcCx};
 use miditool_effects::{
-    Channelize, KeyDist, LooseKeys, ShuffleLock, ShuffleMode, Transpose, VelocityCurve,
+    Channelize, Delay, Echo, KeyDist, LooseKeys, Restrike, ShuffleLock, ShuffleMode, Stutter,
+    Transpose, VelocityCurve,
 };
 use proptest::prelude::*;
 
@@ -157,5 +160,99 @@ proptest! {
             leaf(VelocityCurve { gamma: 1.5, floor: 5, ceiling: 127 }),
         ]);
         assert_no_orphans(&mut node, &steps);
+    }
+
+    #[test]
+    fn delay_no_orphans(steps in steps(), delta in 0u64..=2_000_000_000) {
+        assert_no_orphans(&mut leaf(Delay::new(delta)), &balanced(&steps));
+    }
+
+    #[test]
+    fn echo_no_orphans(
+        steps in steps(),
+        repeats in 0u8..=20,
+        delta in 0u64..=1_000_000_000,
+        decay in 0.0f32..=1.5,
+        transpose in -140i16..=140,
+    ) {
+        let fx = Echo::new(repeats, delta, decay, transpose);
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    #[test]
+    fn restrike_no_orphans(
+        steps in steps(),
+        seed: u64,
+        interval in 0u64..=1_000_000_000,
+        jitter in 0.0f32..=2.0,
+        decay in 0.0f32..=1.5,
+        floor in 0u8..=127,
+        max_repeats in 0u8..=30,
+    ) {
+        let fx = Restrike::new(seed, interval, jitter, decay, floor, max_repeats);
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    #[test]
+    fn stutter_no_orphans(
+        steps in steps(),
+        repeats in 0u8..=30,
+        gap in 0u64..=1_000_000_000,
+        curve in 0.1f32..=5.0,
+    ) {
+        let fx = Stutter::new(repeats, gap, curve);
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    // Echo repeats stay small here: Transpose's flush emits one note-off
+    // per note it tracks, up to (1 + repeats) keys per input note-on, and
+    // that total must fit one EventBuf.
+    #[test]
+    fn echo_into_transpose_no_orphans(
+        steps in steps(),
+        semis in -24i16..=24,
+        transpose in -12i16..=12,
+    ) {
+        let mut node = Node::Chain(vec![
+            leaf(Echo::new(2, 1_000_000, 0.8, transpose)),
+            leaf(Transpose::new(semis)),
+        ]);
+        assert_no_orphans(&mut node, &steps);
+    }
+}
+
+/// The widest configuration of each time-based effect, fed the loudest
+/// note-on, must fan out within one EventBuf and drop nothing.
+#[test]
+fn worst_case_fanout_fits_the_buffer() {
+    let cases: Vec<(&str, Box<dyn Effect>, usize)> = vec![
+        ("delay", Box::new(Delay::new(u64::MAX)), 1),
+        ("echo", Box::new(Echo::new(u8::MAX, 1, 1.0, 0)), 1 + 16),
+        (
+            "restrike",
+            Box::new(Restrike::new(0, 1, 0.9, 1.0, 0, u8::MAX)),
+            1 + 2 * 24,
+        ),
+        (
+            "stutter",
+            Box::new(Stutter::new(u8::MAX, 1, 4.0)),
+            1 + 2 * 24,
+        ),
+    ];
+    let on = Event::new(
+        0,
+        EventKind::NoteOn {
+            ch: 0,
+            key: 60,
+            vel: 127,
+        },
+    );
+    for (name, mut fx, expected) in cases {
+        let cx = ProcCx::at(0);
+        let mut out = EventBuf::new();
+        fx.process(&on, &mut out, &cx);
+        assert_eq!(out.len(), expected, "{name}: fanout");
+        assert!(out.len() <= MAX_FANOUT, "{name}: over MAX_FANOUT");
+        assert_eq!(cx.dropped.load(Ordering::Relaxed), 0, "{name}: dropped");
     }
 }

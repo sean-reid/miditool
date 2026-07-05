@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.6](https://github.com/sean-reid/miditool/compare/v0.1.5...v0.1.6) (2026-07-05)
+
+
+### Features
+
+* config nodes and help for the rhythm wave ([d52f605](https://github.com/sean-reid/miditool/commit/d52f6056ab5127b827e5ce333200c3b9f3a3a200))
+* ten time, rhythm, and dynamics effects ([056fbf8](https://github.com/sean-reid/miditool/commit/056fbf8e12b8723b8d3d356f5f700ce470dd93ed))
+
+
+### Bug Fixes
+
+* deploy docs from a branch, sidestepping the flaky pages api ([88ce1f3](https://github.com/sean-reid/miditool/commit/88ce1f3911ceae6b1be976bab06131ca6b5283f2))
+
 ## [0.1.5](https://github.com/sean-reid/miditool/compare/v0.1.4...v0.1.5) (2026-07-05)
 
 

@@ -40,7 +40,7 @@ In the DAW, set one instrument track to receive channel 2 and another channel 3;
 Give each scene its own channel, so switching scenes from the [remote](/miditool/guides/remote/) also switches which DAW instrument sounds:
 
 ```kdl
-remote port=8320
+remote port=8320 bind="0.0.0.0"
 
 scene "keys" {
     channelize 1

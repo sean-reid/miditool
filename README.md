@@ -15,12 +15,11 @@ Early but real: the engine, nine effects, scenes, hot reload, and the phone remo
 ```sh
 curl -fsSL https://github.com/sean-reid/miditool/releases/latest/download/miditool-installer.sh | sh
 miditool ports                  # find your keyboard
-miditool run examples/scrambled.kdl
 ```
 
 Windows and from-source instructions are in the [docs](https://sean-reid.github.io/miditool/getting-started/).
 
-A config is a KDL file describing an effect chain:
+A config is a KDL file describing an effect chain. Save this as `miditool.kdl`, then `miditool run`:
 
 ```kdl
 input "Roland"                  // substring of your keyboard's port name

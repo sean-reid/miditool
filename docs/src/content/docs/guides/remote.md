@@ -11,7 +11,7 @@ Add a `remote` node to the config:
 
 ```kdl title="miditool.kdl"
 input "Roland"
-remote port=8320
+remote port=8320 bind="0.0.0.0"
 
 scene "scrambled" {
     shuffle-lock seed=42
@@ -20,6 +20,8 @@ scene "echoes" {
     echo repeats=4 time="300ms" decay=0.7
 }
 ```
+
+`bind="0.0.0.0"` opens the remote to your local network, which is what a phone on a music stand needs. Without it the remote binds loopback and answers this machine only, so turning it on never exposes anything by accident.
 
 Run miditool, then open the remote from any phone, tablet, or laptop **on the same network**:
 
@@ -34,7 +36,7 @@ http://<LAN-IP>:8320                  e.g. http://192.168.1.20:8320
 - **Linux**: `hostname -I` prints the LAN IP; many distributions also answer at `<hostname>.local` via Avahi.
 - **Windows**: run `ipconfig` and use the IPv4 Address of your active adapter.
 
-The remote serves on the local network only. It is a plain HTTP server bound to your machine's LAN interfaces; nothing leaves your network, and nothing on the internet can reach it.
+The remote never serves beyond your local network. It is a plain HTTP server; with `bind="0.0.0.0"` it answers your machine's LAN interfaces, nothing leaves your network, and nothing on the internet can reach it. Omit `bind=` (or write `bind="127.0.0.1"`) to keep it reachable from this machine only.
 
 ## What the screen shows
 

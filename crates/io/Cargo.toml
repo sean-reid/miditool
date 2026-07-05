@@ -7,6 +7,5 @@ authors.workspace = true
 description = "MIDI port discovery and connections for miditool"
 
 [dependencies]
-miditool-core.workspace = true
 midir.workspace = true
 thiserror.workspace = true

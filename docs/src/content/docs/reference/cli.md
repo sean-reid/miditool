@@ -104,7 +104,7 @@ Measures round-trip latency by sending `N` note pairs (default 500) through a li
 
 ```text
 bench: 500 note pairs, miditool bench in -> engine -> miditool bench out
-  count         min         p50         p90         p99         max   lost
+ events         min         p50         p90         p99         max   lost
    1000     212.4us     341.7us     498.2us     772.9us    1103.5us      0
 ```
 
@@ -120,8 +120,8 @@ Runs every environment check and prints one verdict line per check: `ok`, `warn`
 
 ```text
 ok    midi backend: 1 input (Roland FP-30 MIDI IN), 2 outputs (Roland FP-30 MIDI OUT, IAC Driver Bus 1)
-ok    config miditool.kdl: parses, 2 top-level effects
-warn  possibly hidden (or offline): Arturia KeyLab; run `miditool unhide` to be sure
+ok    config miditool.kdl: parses, 2 scenes
+warn  possibly hidden or simply offline: Arturia KeyLab; `miditool unhide` clears the hidden case
 warn  GarageBand is running; apps started before miditool keep hearing the raw keyboard until relaunched
 ok    Logic Pro is not running
 ```

@@ -7,6 +7,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # actions: write lets the "Dispatch the binary build" step below start
+  # the release workflow with `gh workflow run`.
   actions: write
 
 jobs:
@@ -16,7 +18,7 @@ jobs:
       prs_created: ${{ steps.rp.outputs.prs_created }}
       pr: ${{ steps.rp.outputs.pr }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: rp
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

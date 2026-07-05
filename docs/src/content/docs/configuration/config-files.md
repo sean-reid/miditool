@@ -62,7 +62,13 @@ Beats per minute, `20..=400`, default 120. It only matters for effects that use 
 
 ### `remote`
 
-`remote port=8320` serves the [web remote](/miditool/guides/remote/) on that port, `1..=65535`. No `remote` node, no server.
+`remote port=8320` serves the [web remote](/miditool/guides/remote/) on that port, `1..=65535`. No `remote` node, no server. By default it binds `127.0.0.1` and answers this machine only; add `bind="0.0.0.0"` to open it to your local network for a phone or tablet:
+
+```kdl
+remote port=8320 bind="0.0.0.0"
+```
+
+`bind=` takes any IP address of the machine; anything that does not parse as one is rejected.
 
 ## Scenes
 
@@ -70,7 +76,7 @@ Instead of bare effects, a config can hold named `scene` blocks, each a chain of
 
 ```kdl title="miditool.kdl"
 input "Roland"
-remote port=8320
+remote port=8320 bind="0.0.0.0"
 
 scene "scrambled" {
     shuffle-lock seed=42

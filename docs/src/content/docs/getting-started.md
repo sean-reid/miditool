@@ -27,7 +27,7 @@ cd miditool
 cargo install --path crates/cli
 ```
 
-Check `miditool --version` to confirm the install.
+Check `miditool --version` to confirm the install. To verify a download out of band, every [GitHub release](https://github.com/sean-reid/miditool/releases) lists per-file sha256 sums alongside the binaries.
 
 ## Find your keyboard
 

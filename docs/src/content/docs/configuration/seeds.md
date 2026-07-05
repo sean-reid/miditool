@@ -3,7 +3,7 @@ title: Seeds
 description: Every random effect is seeded and reproducible. The same seed is the same behavior forever, which makes even a scrambled keyboard learnable.
 ---
 
-Three effects are random: [`shuffle-lock`](/miditool/effects/shuffle-lock/), [`loose-keys`](/miditool/effects/loose-keys/), and [`restrike`](/miditool/effects/restrike/) each require a `seed`, and everything they ever do follows from it. There is no unseeded randomness anywhere in miditool.
+Every random effect takes a `seed`, and everything it ever does follows from it: [`shuffle-lock`](/miditool/effects/shuffle-lock/), [`loose-keys`](/miditool/effects/loose-keys/), [`restrike`](/miditool/effects/restrike/), [`registral-scatter`](/miditool/effects/registral-scatter/), [`wedge-mirror`](/miditool/effects/wedge-mirror/) below 1.0 probability, [`klangfarben`](/miditool/effects/klangfarben/) in random mode, [`aggregate-gate`](/miditool/effects/aggregate-gate/) with leak, and the `rng()` helpers in [scripts](/miditool/configuration/scripting/). There is no unseeded randomness anywhere in miditool.
 
 ## Same seed, same behavior, forever
 

@@ -2,11 +2,12 @@
 
 use std::path::Path;
 
-use miditool_config::{EffectSpec, OutputSpec, ShuffleMode};
+use miditool_config::{EffectSpec, OutputSpec, RowForm, ShuffleMode, SieveSnap};
 use miditool_core::graph::{Discard, Filter, Node, Pass};
 use miditool_effects::{
-    Channelize, Delay, Echo, KeyDist, LooseKeys, Restrike, ShuffleLock, Stutter, Transpose,
-    VelocityCurve,
+    AggregateGate, BlockedKeys, Channelize, Delay, Echo, KeyDist, Klangfarben, LooseKeys,
+    RegistralScatter, Restrike, RingMod, RowSnap, ShuffleLock, SieveQuantizer, Stutter, Telescope,
+    Transpose, VelocityCurve, WedgeMirror,
 };
 use miditool_io::OutputTarget;
 
@@ -103,6 +104,44 @@ fn build_node(spec: EffectSpec, tempo: f32, base: &Path) -> Result<Node, String>
             first.to_nanos(tempo),
             curve,
         ))),
+        EffectSpec::RegistralScatter { seed, lo, hi } => {
+            Node::Leaf(Box::new(RegistralScatter::new(seed, lo, hi)))
+        }
+        EffectSpec::WedgeMirror {
+            axis,
+            probability,
+            seed,
+        } => Node::Leaf(Box::new(WedgeMirror::new(axis, probability, seed))),
+        EffectSpec::BlockedKeys { keys, by_class } => {
+            Node::Leaf(Box::new(BlockedKeys::new(&keys, by_class)))
+        }
+        EffectSpec::Klangfarben {
+            channels,
+            random,
+            seed,
+        } => Node::Leaf(Box::new(Klangfarben::new(&channels, random, seed))),
+        EffectSpec::RingMod {
+            carrier,
+            sum,
+            diff,
+            dry,
+        } => Node::Leaf(Box::new(RingMod::new(carrier, sum, diff, dry))),
+        EffectSpec::Telescope { factor, reference } => {
+            Node::Leaf(Box::new(Telescope::new(factor, reference)))
+        }
+        EffectSpec::RowSnap {
+            row,
+            form,
+            transpose,
+        } => Node::Leaf(Box::new(RowSnap::new(row, row_form(form), transpose))),
+        EffectSpec::AggregateGate { leak, seed } => {
+            Node::Leaf(Box::new(AggregateGate::new(leak, seed)))
+        }
+        EffectSpec::Sieve { expr, snap } => {
+            let sieve = miditool_core::sieve::Sieve::parse(&expr)
+                .map_err(|e| format!("sieve \"{expr}\": {e}"))?;
+            Node::Leaf(Box::new(SieveQuantizer::new(sieve, sieve_snap(snap))))
+        }
         EffectSpec::Script { path, seed } => {
             let resolved = base.join(&path);
             let effect = miditool_script::ScriptEffect::from_file(&resolved, seed)
@@ -117,6 +156,24 @@ fn shuffle_mode(mode: ShuffleMode) -> miditool_effects::ShuffleMode {
         ShuffleMode::Free => miditool_effects::ShuffleMode::Free,
         ShuffleMode::WithinOctave => miditool_effects::ShuffleMode::WithinOctave,
         ShuffleMode::WithinPitchClass => miditool_effects::ShuffleMode::WithinPitchClass,
+    }
+}
+
+fn row_form(form: RowForm) -> miditool_effects::RowForm {
+    match form {
+        RowForm::Prime => miditool_effects::RowForm::Prime,
+        RowForm::Inversion => miditool_effects::RowForm::Inversion,
+        RowForm::Retrograde => miditool_effects::RowForm::Retrograde,
+        RowForm::RetrogradeInversion => miditool_effects::RowForm::RetrogradeInversion,
+    }
+}
+
+fn sieve_snap(snap: SieveSnap) -> miditool_effects::SieveSnap {
+    match snap {
+        SieveSnap::Nearest => miditool_effects::SieveSnap::Nearest,
+        SieveSnap::Up => miditool_effects::SieveSnap::Up,
+        SieveSnap::Down => miditool_effects::SieveSnap::Down,
+        SieveSnap::Drop => miditool_effects::SieveSnap::Drop,
     }
 }
 

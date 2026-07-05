@@ -94,11 +94,38 @@ effects
       around the played key when sigma is given.
   transpose <semitones>
       Shift notes up or down. Notes leaving the MIDI range are dropped.
+  registral-scatter seed=<u64> lo=21 hi=108
+      Keep each note's pitch class but throw it into a seeded random
+      octave within lo..hi.
+  wedge-mirror axis=60 probability=1.0 seed=0
+      Reflect notes around the axis key; probability below 1 mirrors
+      only that (seeded) share of them.
+  telescope factor=<0.1-8.0> reference=60
+      Scale each note's distance from the reference key: factor above
+      1 stretches intervals, below 1 squeezes them.
+  ring-mod carrier=60 sum=true diff=true dry=false
+      Ring modulation for keys: each note becomes its sum and/or
+      difference with the carrier key; dry=true keeps the original too.
+  row-snap 0 11 3 4 8 7 9 5 6 1 2 10 form=\"p\" transpose=0
+      Snap notes onto a twelve-tone row (each pitch class exactly
+      once). Forms: \"p\", \"i\", \"r\", \"ri\"; transpose shifts the row.
+  sieve \"8@0|8@3|11@5\" snap=\"nearest\"
+      Quantize keys onto a Xenakis sieve. Off-sieve notes snap
+      \"nearest\", \"up\", or \"down\", or \"drop\" entirely.
+  aggregate-gate leak=0.0 seed=0
+      Each pitch class sounds once until all twelve have arrived, then
+      the slate wipes; leak lets a (seeded) share of repeats through.
+  blocked-keys 60 64 67
+      Drop the listed keys; with by-class=true they are pitch classes
+      0-11, blocked in every octave.
   velocity-curve gamma=1.0 floor=1 ceiling=127
       Reshape touch: gamma below 1 lifts soft playing, above 1 compresses
       it. Output maps into floor..ceiling.
   channelize <1-16>
       Send everything to one MIDI channel.
+  klangfarben 2 3 4 mode=\"cycle\" seed=0
+      Deal successive notes across channels, one per note: around the
+      list in order, or a seeded random pick with mode=\"random\".
   delay time=\"250ms\"
       Hold everything back by a fixed time.
   echo repeats=3 time=\"300ms\" decay=0.6 transpose=0

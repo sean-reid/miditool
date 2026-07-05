@@ -6,7 +6,8 @@ use std::net::IpAddr;
 
 use crate::ast;
 use crate::{
-    Config, ConfigError, EffectSpec, OutputSpec, RemoteSpec, SceneSpec, ShuffleMode, TimeSpec,
+    Config, ConfigError, EffectSpec, OutputSpec, RemoteSpec, RowForm, SceneSpec, ShuffleMode,
+    SieveSnap, TimeSpec,
 };
 
 /// Output port name used when the config has no `output` node.
@@ -361,6 +362,154 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
                 curve: curve as f32,
             }
         }
+        E::RegistralScatter { seed, lo, hi } => {
+            let (lo, hi) = key_range("registral-scatter", lo, hi, DEFAULT_LO, DEFAULT_HI)?;
+            EffectSpec::RegistralScatter { seed, lo, hi }
+        }
+        E::WedgeMirror {
+            axis,
+            probability,
+            seed,
+        } => EffectSpec::WedgeMirror {
+            axis: key("wedge-mirror", "axis", axis.unwrap_or(60))?,
+            probability: fraction("wedge-mirror", "probability", probability.unwrap_or(1.0))?,
+            seed: seed.unwrap_or(0),
+        },
+        E::BlockedKeys { keys, by_class } => {
+            if keys.is_empty() {
+                return Err(ConfigError::invalid(
+                    "blocked-keys",
+                    "at least one key is required",
+                ));
+            }
+            let by_class = by_class.unwrap_or(false);
+            let mut items = Vec::with_capacity(keys.len());
+            for value in keys {
+                if by_class && !(0..=11).contains(&value) {
+                    return Err(ConfigError::invalid(
+                        "blocked-keys",
+                        format!(
+                            "with by-class=true entries are pitch classes within 0..=11, \
+                             got {value}"
+                        ),
+                    ));
+                }
+                items.push(if by_class {
+                    value as u8
+                } else {
+                    key("blocked-keys", "key", value)?
+                });
+            }
+            items.sort_unstable();
+            items.dedup();
+            EffectSpec::BlockedKeys {
+                keys: items,
+                by_class,
+            }
+        }
+        E::Klangfarben {
+            channels,
+            mode,
+            seed,
+        } => {
+            if channels.is_empty() {
+                return Err(ConfigError::invalid(
+                    "klangfarben",
+                    "at least one channel is required",
+                ));
+            }
+            // The list is the cycle, so order is kept as written and a
+            // repeated channel is an error rather than being quietly
+            // dropped the way only-channels dedupes.
+            let mut chans: Vec<u8> = Vec::with_capacity(channels.len());
+            for raw in channels {
+                let ch = channel("klangfarben", raw)?;
+                if chans.contains(&ch) {
+                    return Err(ConfigError::invalid(
+                        "klangfarben",
+                        format!("channel {raw} is listed more than once"),
+                    ));
+                }
+                chans.push(ch);
+            }
+            EffectSpec::Klangfarben {
+                channels: chans,
+                random: klangfarben_random(mode)?,
+                seed: seed.unwrap_or(0),
+            }
+        }
+        E::RingMod {
+            carrier,
+            sum,
+            diff,
+            dry,
+        } => {
+            let sum = sum.unwrap_or(true);
+            let diff = diff.unwrap_or(true);
+            let dry = dry.unwrap_or(false);
+            if !(sum || diff || dry) {
+                return Err(ConfigError::invalid(
+                    "ring-mod",
+                    "at least one of sum=, diff=, and dry= must be true, \
+                     or every note is dropped",
+                ));
+            }
+            EffectSpec::RingMod {
+                carrier: key("ring-mod", "carrier", carrier)?,
+                sum,
+                diff,
+                dry,
+            }
+        }
+        E::Telescope {
+            factor: ast::Number(factor),
+            reference,
+        } => {
+            if !(factor.is_finite() && (0.1..=8.0).contains(&factor)) {
+                return Err(ConfigError::invalid(
+                    "telescope",
+                    format!("factor must be within 0.1..=8.0, got {factor}"),
+                ));
+            }
+            EffectSpec::Telescope {
+                factor: factor as f32,
+                reference: key("telescope", "reference", reference.unwrap_or(60))?,
+            }
+        }
+        E::RowSnap {
+            row,
+            form,
+            transpose,
+        } => {
+            let transpose = transpose.unwrap_or(0);
+            if !(-24..=24).contains(&transpose) {
+                return Err(ConfigError::invalid(
+                    "row-snap",
+                    format!("transpose must be within -24..=24 semitones, got {transpose}"),
+                ));
+            }
+            EffectSpec::RowSnap {
+                row: tone_row(row)?,
+                form: row_form(form)?,
+                transpose: transpose as i8,
+            }
+        }
+        E::AggregateGate { leak, seed } => EffectSpec::AggregateGate {
+            leak: fraction("aggregate-gate", "leak", leak.unwrap_or(0.0))?,
+            seed: seed.unwrap_or(0),
+        },
+        E::Sieve { expr, snap } => {
+            if expr.is_empty() {
+                return Err(ConfigError::invalid(
+                    "sieve",
+                    "the sieve expression must not be empty",
+                ));
+            }
+            EffectSpec::Sieve {
+                expr,
+                snap: sieve_snap(snap)?,
+            }
+        }
         E::Script { path, seed } => {
             if path.is_empty() {
                 return Err(ConfigError::invalid(
@@ -555,6 +704,100 @@ fn ordered(
             node,
             format!("{lo_name}={lo} must not exceed {hi_name}={hi}"),
         ))
+    }
+}
+
+/// A fraction property, 0..=1 and finite.
+fn fraction(node: &'static str, prop: &str, value: f64) -> Result<f32, ConfigError> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(value as f32)
+    } else {
+        Err(ConfigError::invalid(
+            node,
+            format!("{prop} must be within 0..=1, got {value}"),
+        ))
+    }
+}
+
+/// A `row-snap` row: exactly 12 arguments, together a permutation of the
+/// pitch classes 0..=11. The error for a broken permutation names what is
+/// duplicated and what is missing.
+fn tone_row(row: Vec<i64>) -> Result<[u8; 12], ConfigError> {
+    if row.len() != 12 {
+        return Err(ConfigError::invalid(
+            "row-snap",
+            format!("a row is exactly 12 pitch classes, got {}", row.len()),
+        ));
+    }
+    let mut counts = [0u8; 12];
+    let mut fixed = [0u8; 12];
+    for (slot, &value) in fixed.iter_mut().zip(&row) {
+        if !(0..=11).contains(&value) {
+            return Err(ConfigError::invalid(
+                "row-snap",
+                format!("row entries are pitch classes within 0..=11, got {value}"),
+            ));
+        }
+        counts[value as usize] += 1;
+        *slot = value as u8;
+    }
+    let list = |pred: fn(u8) -> bool| {
+        counts
+            .iter()
+            .enumerate()
+            .filter(|&(_, &n)| pred(n))
+            .map(|(pc, _)| pc.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if counts.iter().any(|&n| n != 1) {
+        return Err(ConfigError::invalid(
+            "row-snap",
+            format!(
+                "the row must use every pitch class exactly once; \
+                 duplicated: {}; missing: {}",
+                list(|n| n > 1),
+                list(|n| n == 0),
+            ),
+        ));
+    }
+    Ok(fixed)
+}
+
+fn row_form(form: Option<String>) -> Result<RowForm, ConfigError> {
+    match form.as_deref() {
+        None | Some("p") => Ok(RowForm::Prime),
+        Some("i") => Ok(RowForm::Inversion),
+        Some("r") => Ok(RowForm::Retrograde),
+        Some("ri") => Ok(RowForm::RetrogradeInversion),
+        Some(other) => Err(ConfigError::invalid(
+            "row-snap",
+            format!("form must be \"p\", \"i\", \"r\", or \"ri\", got \"{other}\""),
+        )),
+    }
+}
+
+fn sieve_snap(snap: Option<String>) -> Result<SieveSnap, ConfigError> {
+    match snap.as_deref() {
+        None | Some("nearest") => Ok(SieveSnap::Nearest),
+        Some("up") => Ok(SieveSnap::Up),
+        Some("down") => Ok(SieveSnap::Down),
+        Some("drop") => Ok(SieveSnap::Drop),
+        Some(other) => Err(ConfigError::invalid(
+            "sieve",
+            format!("snap must be \"nearest\", \"up\", \"down\", or \"drop\", got \"{other}\""),
+        )),
+    }
+}
+
+fn klangfarben_random(mode: Option<String>) -> Result<bool, ConfigError> {
+    match mode.as_deref() {
+        None | Some("cycle") => Ok(false),
+        Some("random") => Ok(true),
+        Some(other) => Err(ConfigError::invalid(
+            "klangfarben",
+            format!("mode must be \"cycle\" or \"random\", got \"{other}\""),
+        )),
     }
 }
 

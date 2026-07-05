@@ -4,7 +4,8 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use miditool_config::{
-    Config, EffectSpec, OutputSpec, RemoteSpec, SceneSpec, ShuffleMode, TimeSpec, parse_str,
+    Config, EffectSpec, OutputSpec, RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap,
+    TimeSpec, parse_str,
 };
 
 fn parse(text: &str) -> Config {
@@ -202,6 +203,60 @@ fn scripted_example_parses_exactly() {
                     },
                 ],
             }],
+        }
+    );
+}
+
+#[test]
+fn serial_example_parses_exactly() {
+    let config = parse(include_str!("../../../examples/serial.kdl"));
+    assert_eq!(
+        config,
+        Config {
+            input: Some("Roland".to_owned()),
+            hide_input: false,
+            output: OutputSpec::Virtual("miditool Serial".to_owned()),
+            tempo: 72.0,
+            remote: None,
+            scenes: vec![
+                SceneSpec {
+                    name: "row".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::RowSnap {
+                            row: [0, 11, 3, 4, 8, 7, 9, 5, 6, 1, 2, 10],
+                            form: RowForm::Inversion,
+                            transpose: 7,
+                        },
+                        EffectSpec::VelocityCurve {
+                            gamma: 0.8,
+                            floor: 1,
+                            ceiling: 127,
+                        },
+                    ],
+                },
+                SceneSpec {
+                    name: "sieve clouds".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::Sieve {
+                            expr: "8@0|8@3|11@5".to_owned(),
+                            snap: SieveSnap::Up,
+                        },
+                        EffectSpec::RegistralScatter {
+                            seed: 5,
+                            lo: 36,
+                            hi: 96,
+                        },
+                        EffectSpec::Echo {
+                            repeats: 3,
+                            time: TimeSpec::Beats(1.0),
+                            decay: 0.6,
+                            transpose: 7,
+                        },
+                    ],
+                },
+            ],
         }
     );
 }
@@ -956,6 +1011,467 @@ fn stutter_range_errors() {
     assert!(msg.contains("curve") && msg.contains("0.25..=4.0"), "{msg}");
     let msg = parse_err("stutter first=\"30ms\" curve=5.0");
     assert!(msg.contains("0.25..=4.0") && msg.contains("5"), "{msg}");
+}
+
+#[test]
+fn registral_scatter_defaults_to_piano_range() {
+    assert_eq!(
+        parse_chain("registral-scatter seed=7"),
+        vec![EffectSpec::RegistralScatter {
+            seed: 7,
+            lo: 21,
+            hi: 108,
+        }]
+    );
+}
+
+#[test]
+fn registral_scatter_full_form() {
+    assert_eq!(
+        parse_chain("registral-scatter seed=7 lo=36 hi=96"),
+        vec![EffectSpec::RegistralScatter {
+            seed: 7,
+            lo: 36,
+            hi: 96,
+        }]
+    );
+}
+
+#[test]
+fn registral_scatter_requires_a_seed() {
+    let msg = parse_err("registral-scatter lo=36 hi=96");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn registral_scatter_range_errors() {
+    let msg = parse_err("registral-scatter seed=1 hi=128");
+    assert!(
+        msg.contains("registral-scatter") && msg.contains("0..=127") && msg.contains("128"),
+        "{msg}"
+    );
+    let msg = parse_err("registral-scatter seed=1 lo=61 hi=60");
+    assert!(msg.contains("lo=61"), "lo must not exceed hi: {msg}");
+}
+
+#[test]
+fn wedge_mirror_defaults() {
+    assert_eq!(
+        parse_chain("wedge-mirror"),
+        vec![EffectSpec::WedgeMirror {
+            axis: 60,
+            probability: 1.0,
+            seed: 0,
+        }]
+    );
+}
+
+#[test]
+fn wedge_mirror_full_form() {
+    assert_eq!(
+        parse_chain("wedge-mirror axis=48 probability=0.5 seed=9"),
+        vec![EffectSpec::WedgeMirror {
+            axis: 48,
+            probability: 0.5,
+            seed: 9,
+        }]
+    );
+}
+
+#[test]
+fn wedge_mirror_range_errors() {
+    let msg = parse_err("wedge-mirror axis=128");
+    assert!(
+        msg.contains("wedge-mirror") && msg.contains("axis") && msg.contains("0..=127"),
+        "{msg}"
+    );
+    let msg = parse_err("wedge-mirror probability=1.5");
+    assert!(
+        msg.contains("probability") && msg.contains("0..=1"),
+        "{msg}"
+    );
+    let msg = parse_err("wedge-mirror probability=-0.5");
+    assert!(msg.contains("0..=1"), "lower bound: {msg}");
+}
+
+#[test]
+fn blocked_keys_are_sorted_and_deduplicated() {
+    assert_eq!(
+        parse_chain("blocked-keys 67 60 64 60"),
+        vec![EffectSpec::BlockedKeys {
+            keys: vec![60, 64, 67],
+            by_class: false,
+        }]
+    );
+}
+
+#[test]
+fn blocked_keys_by_class() {
+    assert_eq!(
+        parse_chain("blocked-keys 7 0 4 by-class=true"),
+        vec![EffectSpec::BlockedKeys {
+            keys: vec![0, 4, 7],
+            by_class: true,
+        }]
+    );
+}
+
+#[test]
+fn blocked_keys_require_at_least_one_key() {
+    let msg = parse_err("blocked-keys");
+    assert!(
+        msg.contains("blocked-keys") && msg.contains("at least one"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn blocked_keys_range_errors() {
+    let msg = parse_err("blocked-keys 128");
+    assert!(
+        msg.contains("blocked-keys") && msg.contains("0..=127") && msg.contains("128"),
+        "{msg}"
+    );
+    let msg = parse_err("blocked-keys 12 by-class=true");
+    assert!(
+        msg.contains("0..=11") && msg.contains("12"),
+        "by-class narrows the range: {msg}"
+    );
+}
+
+#[test]
+fn klangfarben_defaults_to_cycling_in_written_order() {
+    assert_eq!(
+        parse_chain("klangfarben 4 2 3"),
+        vec![EffectSpec::Klangfarben {
+            channels: vec![3, 1, 2],
+            random: false,
+            seed: 0,
+        }]
+    );
+}
+
+#[test]
+fn klangfarben_random_mode() {
+    assert_eq!(
+        parse_chain("klangfarben 16 1 mode=\"random\" seed=3"),
+        vec![EffectSpec::Klangfarben {
+            channels: vec![15, 0],
+            random: true,
+            seed: 3,
+        }]
+    );
+}
+
+#[test]
+fn klangfarben_requires_at_least_one_channel() {
+    let msg = parse_err("klangfarben");
+    assert!(
+        msg.contains("klangfarben") && msg.contains("at least one"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn klangfarben_rejects_out_of_range_channels() {
+    let msg = parse_err("klangfarben 0");
+    assert!(msg.contains("1..=16"), "channels are 1-based: {msg}");
+    let msg = parse_err("klangfarben 17");
+    assert!(msg.contains("1..=16") && msg.contains("17"), "{msg}");
+}
+
+#[test]
+fn klangfarben_rejects_duplicate_channels() {
+    let msg = parse_err("klangfarben 2 3 2");
+    assert!(
+        msg.contains("klangfarben") && msg.contains("2") && msg.contains("once"),
+        "error should name the repeated channel: {msg}"
+    );
+}
+
+#[test]
+fn klangfarben_bad_mode_is_rejected() {
+    let msg = parse_err("klangfarben 2 3 mode=\"sideways\"");
+    assert!(
+        msg.contains("sideways") && msg.contains("cycle") && msg.contains("random"),
+        "error should show the bad mode and the alternatives: {msg}"
+    );
+}
+
+#[test]
+fn ring_mod_defaults() {
+    assert_eq!(
+        parse_chain("ring-mod carrier=60"),
+        vec![EffectSpec::RingMod {
+            carrier: 60,
+            sum: true,
+            diff: true,
+            dry: false,
+        }]
+    );
+}
+
+#[test]
+fn ring_mod_full_form() {
+    assert_eq!(
+        parse_chain("ring-mod carrier=48 sum=false diff=true dry=true"),
+        vec![EffectSpec::RingMod {
+            carrier: 48,
+            sum: false,
+            diff: true,
+            dry: true,
+        }]
+    );
+}
+
+#[test]
+fn ring_mod_requires_a_carrier() {
+    let msg = parse_err("ring-mod");
+    assert!(
+        msg.contains("carrier"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn ring_mod_carrier_out_of_range_is_rejected() {
+    let msg = parse_err("ring-mod carrier=128");
+    assert!(
+        msg.contains("ring-mod") && msg.contains("0..=127") && msg.contains("128"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn ring_mod_with_every_output_off_is_rejected() {
+    let msg = parse_err("ring-mod carrier=60 sum=false diff=false");
+    assert!(
+        msg.contains("sum") && msg.contains("diff") && msg.contains("dry"),
+        "error should name the constraint: {msg}"
+    );
+}
+
+#[test]
+fn telescope_defaults_to_middle_c_reference() {
+    assert_eq!(
+        parse_chain("telescope factor=2.0"),
+        vec![EffectSpec::Telescope {
+            factor: 2.0,
+            reference: 60,
+        }]
+    );
+}
+
+#[test]
+fn telescope_factor_accepts_integers_and_decimals() {
+    assert_eq!(
+        parse_chain("telescope factor=2 reference=48"),
+        vec![EffectSpec::Telescope {
+            factor: 2.0,
+            reference: 48,
+        }]
+    );
+    assert_eq!(
+        parse_chain("telescope factor=0.5"),
+        vec![EffectSpec::Telescope {
+            factor: 0.5,
+            reference: 60,
+        }]
+    );
+}
+
+#[test]
+fn telescope_requires_a_factor() {
+    let msg = parse_err("telescope");
+    assert!(
+        msg.contains("factor"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn telescope_range_errors() {
+    let msg = parse_err("telescope factor=0.05");
+    assert!(
+        msg.contains("telescope") && msg.contains("0.1..=8"),
+        "{msg}"
+    );
+    let msg = parse_err("telescope factor=9.0");
+    assert!(msg.contains("0.1..=8") && msg.contains("9"), "{msg}");
+    let msg = parse_err("telescope factor=2.0 reference=128");
+    assert!(
+        msg.contains("reference") && msg.contains("0..=127"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn row_snap_defaults_to_prime() {
+    assert_eq!(
+        parse_chain("row-snap 0 1 2 3 4 5 6 7 8 9 10 11"),
+        vec![EffectSpec::RowSnap {
+            row: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            form: RowForm::Prime,
+            transpose: 0,
+        }]
+    );
+}
+
+#[test]
+fn row_snap_forms() {
+    let chain = parse_chain(
+        "row-snap 0 1 2 3 4 5 6 7 8 9 10 11 form=\"p\"\n\
+         row-snap 0 1 2 3 4 5 6 7 8 9 10 11 form=\"i\"\n\
+         row-snap 0 1 2 3 4 5 6 7 8 9 10 11 form=\"r\"\n\
+         row-snap 0 1 2 3 4 5 6 7 8 9 10 11 form=\"ri\" transpose=-12",
+    );
+    let forms: Vec<_> = chain
+        .iter()
+        .map(|spec| match spec {
+            EffectSpec::RowSnap {
+                form, transpose, ..
+            } => (*form, *transpose),
+            other => panic!("expected row-snap, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        forms,
+        vec![
+            (RowForm::Prime, 0),
+            (RowForm::Inversion, 0),
+            (RowForm::Retrograde, 0),
+            (RowForm::RetrogradeInversion, -12),
+        ]
+    );
+}
+
+#[test]
+fn row_snap_requires_exactly_twelve_entries() {
+    let msg = parse_err("row-snap 0 1 2 3 4 5 6 7 8 9 10");
+    assert!(
+        msg.contains("row-snap") && msg.contains("12") && msg.contains("11"),
+        "error should state the required and the given count: {msg}"
+    );
+    let msg = parse_err("row-snap 0 1 2 3 4 5 6 7 8 9 10 11 0");
+    assert!(msg.contains("12") && msg.contains("13"), "too many: {msg}");
+}
+
+#[test]
+fn row_snap_rejects_entries_outside_pitch_classes() {
+    let msg = parse_err("row-snap 0 1 2 3 4 5 6 7 8 9 10 12");
+    assert!(
+        msg.contains("row-snap") && msg.contains("0..=11") && msg.contains("12"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn row_snap_names_duplicated_and_missing_pitch_classes() {
+    let msg = parse_err("row-snap 0 0 2 3 4 5 6 7 8 9 10 10");
+    assert!(
+        msg.contains("duplicated: 0, 10") && msg.contains("missing: 1, 11"),
+        "error should name what is duplicated and what is missing: {msg}"
+    );
+}
+
+#[test]
+fn row_snap_bad_form_is_rejected() {
+    let msg = parse_err("row-snap 0 1 2 3 4 5 6 7 8 9 10 11 form=\"prime\"");
+    assert!(
+        msg.contains("prime") && msg.contains("\"ri\""),
+        "error should show the bad form and the alternatives: {msg}"
+    );
+}
+
+#[test]
+fn row_snap_transpose_out_of_range_is_rejected() {
+    let msg = parse_err("row-snap 0 1 2 3 4 5 6 7 8 9 10 11 transpose=25");
+    assert!(msg.contains("-24..=24") && msg.contains("25"), "{msg}");
+}
+
+#[test]
+fn aggregate_gate_defaults() {
+    assert_eq!(
+        parse_chain("aggregate-gate"),
+        vec![EffectSpec::AggregateGate { leak: 0.0, seed: 0 }]
+    );
+}
+
+#[test]
+fn aggregate_gate_full_form() {
+    assert_eq!(
+        parse_chain("aggregate-gate leak=0.3 seed=4"),
+        vec![EffectSpec::AggregateGate { leak: 0.3, seed: 4 }]
+    );
+}
+
+#[test]
+fn aggregate_gate_leak_out_of_range_is_rejected() {
+    let msg = parse_err("aggregate-gate leak=1.5");
+    assert!(
+        msg.contains("aggregate-gate") && msg.contains("leak") && msg.contains("0..=1"),
+        "{msg}"
+    );
+    let msg = parse_err("aggregate-gate leak=-0.1");
+    assert!(msg.contains("0..=1"), "lower bound: {msg}");
+}
+
+#[test]
+fn sieve_snap_defaults_to_nearest() {
+    assert_eq!(
+        parse_chain("sieve \"8@0|8@3|11@5\""),
+        vec![EffectSpec::Sieve {
+            expr: "8@0|8@3|11@5".to_owned(),
+            snap: SieveSnap::Nearest,
+        }]
+    );
+}
+
+#[test]
+fn sieve_snap_modes() {
+    let chain = parse_chain(
+        "sieve \"8@0\" snap=\"nearest\"\n\
+         sieve \"8@0\" snap=\"up\"\n\
+         sieve \"8@0\" snap=\"down\"\n\
+         sieve \"8@0\" snap=\"drop\"",
+    );
+    let snaps: Vec<_> = chain
+        .iter()
+        .map(|spec| match spec {
+            EffectSpec::Sieve { snap, .. } => *snap,
+            other => panic!("expected sieve, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        snaps,
+        vec![
+            SieveSnap::Nearest,
+            SieveSnap::Up,
+            SieveSnap::Down,
+            SieveSnap::Drop,
+        ]
+    );
+}
+
+#[test]
+fn empty_sieve_expression_is_rejected() {
+    let msg = parse_err("sieve \"\"");
+    assert!(
+        msg.contains("sieve") && msg.contains("empty"),
+        "error should state the constraint: {msg}"
+    );
+}
+
+#[test]
+fn sieve_bad_snap_is_rejected() {
+    let msg = parse_err("sieve \"8@0\" snap=\"sideways\"");
+    assert!(
+        msg.contains("sideways") && msg.contains("nearest"),
+        "error should show the bad snap and the alternatives: {msg}"
+    );
 }
 
 #[test]

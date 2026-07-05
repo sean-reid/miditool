@@ -144,6 +144,32 @@ pub enum ShuffleMode {
     WithinPitchClass,
 }
 
+/// How `row-snap` reads its tone row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowForm {
+    /// The row as written.
+    Prime,
+    /// Intervals flipped around the first pitch class.
+    Inversion,
+    /// The row read backwards.
+    Retrograde,
+    /// The inversion read backwards.
+    RetrogradeInversion,
+}
+
+/// How `sieve` handles a key that is not on the sieve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SieveSnap {
+    /// Move to the closest sieve key.
+    Nearest,
+    /// Move to the next sieve key above.
+    Up,
+    /// Move to the next sieve key below.
+    Down,
+    /// Drop the note.
+    Drop,
+}
+
 /// One effect node, validated and ready to compile into the effect graph.
 ///
 /// Ranges are inclusive throughout. Channels are stored 0-based (the wire
@@ -215,6 +241,56 @@ pub enum EffectSpec {
         first: TimeSpec,
         curve: f32,
     },
+    /// Keep each note's pitch class but move it to a seeded random
+    /// octave within `lo..=hi`.
+    RegistralScatter { seed: u64, lo: u8, hi: u8 },
+    /// Reflect notes around the `axis` key, each note with the given
+    /// probability (seeded; 1 mirrors everything).
+    WedgeMirror {
+        axis: u8,
+        probability: f32,
+        seed: u64,
+    },
+    /// Drop notes on the listed keys (sorted, deduplicated). With
+    /// `by_class` the entries are pitch classes 0..=11 and every octave
+    /// of them is blocked.
+    BlockedKeys { keys: Vec<u8>, by_class: bool },
+    /// Deal successive notes across channels (0-based, in the order
+    /// written): round-robin, or a seeded random pick when `random`.
+    Klangfarben {
+        channels: Vec<u8>,
+        random: bool,
+        seed: u64,
+    },
+    /// Ring modulation for keys: each note becomes its sum and/or
+    /// difference with the `carrier` key; `dry` keeps the original too.
+    /// At least one of the three flags is true.
+    RingMod {
+        carrier: u8,
+        sum: bool,
+        diff: bool,
+        dry: bool,
+    },
+    /// Scale each note's distance from the `reference` key by `factor`:
+    /// above 1 stretches intervals, below 1 compresses them.
+    Telescope { factor: f32, reference: u8 },
+    /// Snap notes onto a twelve-tone row (a permutation of the pitch
+    /// classes 0..=11), read in the given form and shifted by
+    /// `transpose` semitones.
+    RowSnap {
+        row: [u8; 12],
+        form: RowForm,
+        transpose: i8,
+    },
+    /// Let each pitch class sound once per aggregate: repeats are gated
+    /// until all twelve classes have arrived, except a seeded `leak`
+    /// fraction that slips through early.
+    AggregateGate { leak: f32, seed: u64 },
+    /// Quantize keys onto a Xenakis sieve: `sieve "8@0|8@3" snap="up"`.
+    /// The expression is kept as written; the CLI parses it against
+    /// `miditool-core`'s sieve grammar when it builds the graph, so this
+    /// crate only checks that it is non-empty.
+    Sieve { expr: String, snap: SieveSnap },
     /// Run a Luau script on every event: `script "wedge.lua" seed=42`.
     /// The path is kept exactly as written; the CLI resolves it against
     /// the config file's directory when it builds the graph, so parsing

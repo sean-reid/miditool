@@ -236,6 +236,72 @@ pub(crate) enum Effect {
         #[knus(property)]
         curve: Option<f64>,
     },
+    RegistralScatter {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        lo: Option<i64>,
+        #[knus(property)]
+        hi: Option<i64>,
+    },
+    WedgeMirror {
+        #[knus(property)]
+        axis: Option<i64>,
+        #[knus(property)]
+        probability: Option<f64>,
+        #[knus(property)]
+        seed: Option<u64>,
+    },
+    BlockedKeys {
+        #[knus(arguments)]
+        keys: Vec<i64>,
+        #[knus(property)]
+        by_class: Option<bool>,
+    },
+    Klangfarben {
+        #[knus(arguments)]
+        channels: Vec<i64>,
+        #[knus(property)]
+        mode: Option<String>,
+        #[knus(property)]
+        seed: Option<u64>,
+    },
+    RingMod {
+        #[knus(property)]
+        carrier: i64,
+        #[knus(property)]
+        sum: Option<bool>,
+        #[knus(property)]
+        diff: Option<bool>,
+        #[knus(property)]
+        dry: Option<bool>,
+    },
+    Telescope {
+        #[knus(property)]
+        factor: Number,
+        #[knus(property)]
+        reference: Option<i64>,
+    },
+    RowSnap {
+        #[knus(arguments)]
+        row: Vec<i64>,
+        #[knus(property)]
+        form: Option<String>,
+        #[knus(property)]
+        transpose: Option<i64>,
+    },
+    AggregateGate {
+        #[knus(property)]
+        leak: Option<f64>,
+        #[knus(property)]
+        seed: Option<u64>,
+    },
+    Sieve {
+        #[knus(argument)]
+        expr: String,
+        #[knus(property)]
+        snap: Option<String>,
+    },
     Script {
         #[knus(argument)]
         path: String,

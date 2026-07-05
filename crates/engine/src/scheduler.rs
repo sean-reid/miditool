@@ -206,14 +206,23 @@ impl SchedulerCore {
         }
     }
 
-    /// Silence everything the tracker has seen sounding. The note-offs go
-    /// through [`SchedulerCore::dispatch`] like any other send, so the tap
-    /// sees them too; re-observing them is a no-op on the reset tracker.
+    /// Silence everything the tracker has seen sounding. One tracker pass
+    /// emits at most a buffer's worth, so loop until a pass leaves room to
+    /// spare (meaning the walk finished), bounded at 64 rounds to stay
+    /// panic-proof however inconsistent the tracker might be. The
+    /// note-offs go through [`SchedulerCore::dispatch`] like any other
+    /// send, so the tap sees them too; re-observing them is a no-op on the
+    /// cleared slots.
     fn silence(&mut self, now: Timestamp, send: &mut impl FnMut(&[u8])) {
-        let mut out = EventBuf::new();
-        self.tracker.silence(now, &mut out);
-        for e in &out {
-            self.dispatch(e.time, e.kind, send);
+        for _ in 0..64 {
+            let mut out = EventBuf::new();
+            self.tracker.silence(now, &mut out);
+            for e in &out {
+                self.dispatch(e.time, e.kind, send);
+            }
+            if !out.is_full() {
+                return;
+            }
         }
     }
 }
@@ -253,7 +262,7 @@ pub(crate) fn scheduler_loop(
         drain(&mut ring, &mut core, send);
         core.send_due(now_ns(epoch), send);
         match core.next_deadline() {
-            Some(deadline) => wait_until(epoch, deadline),
+            Some(deadline) => wait_until(epoch, deadline, &ring),
             None => thread::park(),
         }
     }
@@ -273,7 +282,7 @@ fn drain(ring: &mut rtrb::Consumer<Msg>, core: &mut SchedulerCore, send: &mut im
 
 /// Sleep toward `deadline`: park until the spin margin (returning early
 /// if unparked, so new work re-enters the loop), then spin the tail.
-fn wait_until(epoch: Instant, deadline: Timestamp) {
+fn wait_until(epoch: Instant, deadline: Timestamp, ring: &rtrb::Consumer<Msg>) {
     let now = now_ns(epoch);
     if now >= deadline {
         return;
@@ -283,8 +292,19 @@ fn wait_until(epoch: Instant, deadline: Timestamp) {
         thread::park_timeout(Duration::from_nanos(remaining - SPIN_NS));
         return;
     }
+    spin_until(epoch, deadline, ring);
+}
+
+/// Spin out the last stretch before `deadline`, returning early when new
+/// work lands in the ring. Unpark cannot interrupt a spin the way it
+/// interrupts a park, so without the ring check an immediate event pushed
+/// during another event's spin window would wait out the whole margin.
+fn spin_until(epoch: Instant, deadline: Timestamp, ring: &rtrb::Consumer<Msg>) {
     let mut spins = 0u32;
     while now_ns(epoch) < deadline {
+        if !ring.is_empty() {
+            return;
+        }
         std::hint::spin_loop();
         spins += 1;
         if spins.is_multiple_of(64) {
@@ -430,6 +450,51 @@ mod tests {
         assert_eq!(sent, vec![off_bytes(60)]);
         assert_eq!(core.next_deadline(), None);
         assert_eq!(core.tracker.active(), 0);
+    }
+
+    #[test]
+    fn kill_silences_more_notes_than_one_buffer_holds() {
+        let mut core = SchedulerCore::new();
+        let mut seq = 0;
+        for ch in 0..2u8 {
+            for key in 0..75u8 {
+                core.schedule(0, seq, EventKind::NoteOn { ch, key, vel: 100 });
+                seq += 1;
+            }
+        }
+        let mut sent = Vec::new();
+        core.send_due(0, &mut |b| sent.push(b.to_vec()));
+        assert_eq!(sent.len(), 150);
+        sent.clear();
+        // 150 sounding slots exceed one EventBuf (128); every one of them
+        // must still get its note-off.
+        core.kill(MS, &mut |b| sent.push(b.to_vec()));
+        assert_eq!(sent.len(), 150);
+        assert!(sent.iter().all(|b| b[0] & 0xF0 == 0x80), "all note-offs");
+        assert_eq!(core.tracker.active(), 0);
+    }
+
+    #[test]
+    fn spin_breaks_out_when_new_work_arrives() {
+        let epoch = Instant::now();
+        let (mut prod, cons) = rtrb::RingBuffer::<Msg>::new(4);
+        let deadline = now_ns(epoch) + 5_000 * MS;
+        let pusher = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            prod.push(Msg::Raw {
+                len: 1,
+                bytes: [0xF8, 0, 0],
+            })
+            .unwrap();
+        });
+        spin_until(epoch, deadline, &cons);
+        // Ordering is the guarantee: the spin ended because work arrived,
+        // well before the far deadline (generous margin for loaded CI).
+        assert!(
+            now_ns(epoch) < deadline - 1_000 * MS,
+            "spin waited out the deadline instead of yielding to new work"
+        );
+        pusher.join().unwrap();
     }
 
     /// A running `scheduler_loop` and everything a test needs to poke it:

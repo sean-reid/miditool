@@ -70,12 +70,22 @@ pub(crate) fn watch(
 /// One debounced config change: re-parse, rebuild the active scene
 /// (matched by name, falling back to scene 0), swap the graph in, and
 /// publish the new scene table. Errors keep the running state as-is.
+///
+/// Lock order: the scenes mutex first, then whatever `reload` and `build`
+/// lock internally (the spec store). `reload` must run under the scenes
+/// mutex so the store refresh, the table update, and the rebuild are one
+/// atomic step: [`crate::EngineHandle::set_scene`] validates an index
+/// against the table and builds from the store under this same mutex, and
+/// a reload slipping in between would let it build a different config
+/// than the one it validated. `set_scene`'s build closure already runs
+/// under the scenes mutex, so this order is the only one in the program.
 fn apply(
     reload: &ReloadScenes,
     build: &BuildScene,
     scenes: &Mutex<SceneState>,
     graphs: &mpsc::Sender<Node>,
 ) {
+    let mut state = lock(scenes);
     let new_defs = match reload() {
         Ok(defs) => defs,
         Err(e) => {
@@ -87,7 +97,6 @@ fn apply(
         eprintln!("miditool: config reload produced no scenes, keeping current scenes");
         return;
     }
-    let mut state = lock(scenes);
     let idx = state
         .defs
         .get(state.active)
@@ -164,6 +173,42 @@ mod tests {
         let state = scenes.lock().unwrap();
         assert_eq!(state.active, 0);
         assert_eq!(state.defs, vec![def("x", false), def("y", false)]);
+    }
+
+    #[test]
+    fn reload_holds_the_scene_lock_across_the_store_refresh() {
+        let (_calls, build) = recording_build();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (locking_tx, locking_rx) = mpsc::channel::<()>();
+        let reload: ReloadScenes = Box::new(move || {
+            entered_tx.send(()).unwrap();
+            // Wait until the observer is about to take the scenes mutex,
+            // then give it a beat to block on the lock. If the refresh ran
+            // outside the lock, the observer would win the race and read
+            // the stale table an in-flight reload is about to replace.
+            locking_rx.recv().unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+            Ok(vec![def("new", false)])
+        });
+        let scenes = Arc::new(Mutex::new(SceneState {
+            defs: vec![def("old", false)],
+            active: 0,
+        }));
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let scenes = Arc::clone(&scenes);
+            std::thread::spawn(move || apply(&reload, &build, &scenes, &tx))
+        };
+        entered_rx.recv().unwrap();
+        locking_tx.send(()).unwrap();
+        // Ordering is the assertion: anyone acquiring the mutex after a
+        // reload started sees the finished update, never the stale table
+        // set_scene would have validated an index against.
+        let state = lock(&scenes);
+        assert_eq!(state.defs, vec![def("new", false)]);
+        drop(state);
+        worker.join().unwrap();
+        assert!(rx.try_recv().is_ok());
     }
 
     #[test]

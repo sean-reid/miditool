@@ -58,6 +58,9 @@ pub struct Pipeline {
     note_gen: PerNote<u16>,
     /// Which generation saw each channel's pending pedal-down; 0 = none.
     sustain_gen: [u16; 16],
+    /// A SysEx message started (0xF0) but its terminator (0xF7) has not
+    /// arrived yet; packets are forwarded raw until it does.
+    sysex_open: bool,
 }
 
 impl Pipeline {
@@ -74,6 +77,7 @@ impl Pipeline {
             counter: 1,
             note_gen: PerNote::new(),
             sustain_gen: [0; 16],
+            sysex_open: false,
         }
     }
 
@@ -82,7 +86,12 @@ impl Pipeline {
     /// stamped later than it.
     ///
     /// SysEx and system common packets (first byte 0xF0..=0xF7) are handed
-    /// to `raw` verbatim without decoding, as are realtime bytes.
+    /// to `raw` verbatim without decoding, as are realtime bytes. A SysEx
+    /// message split across packets (0xF0 with no 0xF7 in the same packet)
+    /// keeps subsequent packets, continuation data and interleaved
+    /// realtime alike, on the raw path until the packet carrying the
+    /// terminator. Channel data interleaved with SysEx inside a single
+    /// packet stays unsupported.
     pub fn handle(
         &mut self,
         now_ns: Timestamp,
@@ -92,8 +101,20 @@ impl Pipeline {
     ) {
         match bytes.first() {
             None => return,
+            // Continuation of a multi-packet SysEx: forward raw until the
+            // terminator shows up.
+            Some(_) if self.sysex_open => {
+                if bytes.contains(&0xF7) {
+                    self.sysex_open = false;
+                }
+                raw(bytes);
+                return;
+            }
             // SysEx and system common: not modeled, pass the packet through.
             Some(&b) if (0xF0..=0xF7).contains(&b) => {
+                if b == 0xF0 && !bytes.contains(&0xF7) {
+                    self.sysex_open = true;
+                }
                 raw(bytes);
                 return;
             }
@@ -129,8 +150,11 @@ impl Pipeline {
         }
         if self.draining.is_full() {
             // Notes still pointing at the evicted graph go stale; their
-            // note-offs will fall through to the current graph.
+            // note-offs will fall through to the current graph. Pedals it
+            // still holds get a synthetic release first: nothing else will
+            // ever lift them on its output channels.
             let mut evicted = self.draining.remove(0);
+            release_pedals(&mut evicted, now_ns, emit);
             flush_graph(&mut evicted.root, now_ns, emit);
         }
         self.draining.push(old);
@@ -148,6 +172,7 @@ impl Pipeline {
         self.note_gen = PerNote::new();
         self.sustain_gen = [0; 16];
         self.decoder = Decoder::new();
+        self.sysex_open = false;
     }
 
     /// Route one decoded event to the generation that must process it.
@@ -178,10 +203,20 @@ impl Pipeline {
             } if value >= 64 => {
                 // Pedal data can be continuous; a repeated down transfers
                 // ownership to the current graph and releases the old
-                // owner's claim, whose flush covers whatever the up it
-                // will never see would have done.
+                // owner's claim. The old owner will never see the pedal-up
+                // the player owes it, so it gets a synthetic one first:
+                // whatever output channel its mapping sustains must stop
+                // sustaining before the claim moves.
                 let prev = self.sustain_gen[ch as usize & 15];
                 if prev != 0 && prev != self.current.id {
+                    if let Some(owner) = self.draining.iter_mut().find(|g| g.id == prev) {
+                        let up = EventKind::ControlChange {
+                            ch,
+                            cc: CC_SUSTAIN,
+                            value: 0,
+                        };
+                        run_graph(&mut owner.root, now, up, emit);
+                    }
                     self.release_sustain(prev, ch, now, emit);
                 }
                 self.sustain_gen[ch as usize & 15] = self.current.id;
@@ -205,6 +240,13 @@ impl Pipeline {
                 } else {
                     self.current.sustain &= !(1 << ch);
                 }
+            }
+            EventKind::PolyPressure { ch, key, .. } => {
+                // Pressure modulates the sounding note, so it follows the
+                // generation that opened it (like a note-off does), without
+                // touching the slot or any claim.
+                let owner = self.note_gen.get(ch, key);
+                self.route_to(owner, now, kind, emit);
             }
             // Everything else is stateless with respect to generations.
             _ => run_graph(&mut self.current.root, now, kind, emit),
@@ -248,12 +290,35 @@ impl Pipeline {
     }
 
     /// Flush and drop a draining generation once nothing points at it.
+    ///
+    /// The retired graph's tree is deallocated right here, on the calling
+    /// (MIDI callback) thread. That is a deliberate exception to the
+    /// no-allocation rule: it can only happen after a reload or scene
+    /// swap, at most once per swap, and handing the tree to another thread
+    /// would complicate ownership for a cost paid only on those events.
     fn retire_if_idle(&mut self, i: usize, now: Timestamp, emit: &mut impl FnMut(Event)) {
         if self.draining[i].idle() {
             let mut retired = self.draining.remove(i);
             flush_graph(&mut retired.root, now, emit);
         }
     }
+}
+
+/// Run a synthetic pedal-up through a generation for every channel whose
+/// pedal-down it still holds, so its output channels stop sustaining
+/// before the graph is flushed and dropped.
+fn release_pedals(generation: &mut Generation, now: Timestamp, emit: &mut impl FnMut(Event)) {
+    for ch in 0..16u8 {
+        if generation.sustain & (1 << ch) != 0 {
+            let up = EventKind::ControlChange {
+                ch,
+                cc: CC_SUSTAIN,
+                value: 0,
+            };
+            run_graph(&mut generation.root, now, up, emit);
+        }
+    }
+    generation.sustain = 0;
 }
 
 /// Run one event through a graph, forwarding its outputs.
@@ -306,6 +371,11 @@ mod tests {
                     ch,
                     key: key + self.semis,
                     vel,
+                },
+                EventKind::PolyPressure { ch, key, value } => EventKind::PolyPressure {
+                    ch,
+                    key: key + self.semis,
+                    value,
                 },
                 EventKind::ControlChange {
                     ch,
@@ -383,6 +453,10 @@ mod tests {
             cc: CC_SUSTAIN,
             value,
         }
+    }
+
+    fn pp(key: u8, value: u8) -> EventKind {
+        EventKind::PolyPressure { ch: 0, key, value }
     }
 
     #[test]
@@ -502,6 +576,65 @@ mod tests {
         // The release lands on graph 1's channel, then graph 1 retires.
         let out = feed(&mut p, &[&[0xB0, 64, 0]]);
         assert_eq!(out, vec![pedal(2, 0), flushed(1)]);
+    }
+
+    #[test]
+    fn repeated_pedal_down_releases_the_old_graphs_pedal() {
+        let mut p = Pipeline::new(shift(2, 1));
+        assert_eq!(feed(&mut p, &[&[0xB0, 64, 127]]), vec![pedal(2, 127)]);
+        assert!(swap(&mut p, shift(5, 2)).is_empty());
+        // Continuous pedal data re-sends the down: ownership moves to
+        // graph 2, and graph 1's output channel gets a synthetic release
+        // before graph 1 retires; without it channel 2 sustains forever.
+        let out = feed(&mut p, &[&[0xB0, 64, 127]]);
+        assert_eq!(out, vec![pedal(2, 0), flushed(1), pedal(5, 127)]);
+        assert_eq!(feed(&mut p, &[&[0xB0, 64, 0]]), vec![pedal(5, 0)]);
+    }
+
+    #[test]
+    fn eviction_releases_a_held_pedal() {
+        let mut p = Pipeline::new(shift(1, 1));
+        assert_eq!(feed(&mut p, &[&[0xB0, 64, 127]]), vec![pedal(1, 127)]);
+        // Graphs 2..=4 each take a held note, sending 1..=3 draining.
+        for id in [2, 3, 4] {
+            assert!(swap(&mut p, shift(id, id)).is_empty());
+            feed(&mut p, &[&[0x90, 60 + id, 100]]);
+        }
+        // The next swap evicts graph 1, which still holds the pedal: its
+        // output channel is released before the force-flush.
+        assert_eq!(swap(&mut p, shift(9, 9)), vec![pedal(1, 0), flushed(1)]);
+    }
+
+    #[test]
+    fn poly_pressure_follows_the_held_notes_graph() {
+        let mut p = Pipeline::new(shift(2, 1));
+        assert_eq!(feed(&mut p, &[&[0x90, 60, 100]]), vec![on(62)]);
+        assert!(swap(&mut p, shift(5, 2)).is_empty());
+        // Pressure on the held key modulates the note graph 1 opened, so
+        // it lands on that note's sounding key; pressure on a key graph 1
+        // never saw maps through the current graph.
+        let out = feed(&mut p, &[&[0xA0, 60, 99], &[0xA0, 61, 42]]);
+        assert_eq!(out, vec![pp(62, 99), pp(66, 42)]);
+        // The claim is untouched: the note-off still drains graph 1.
+        assert_eq!(feed(&mut p, &[&[0x80, 60, 0]]), vec![off(62), flushed(1)]);
+    }
+
+    #[test]
+    fn multi_packet_sysex_forwards_every_fragment_verbatim() {
+        let mut p = pass();
+        let mut raw = Vec::new();
+        let packets: [&[u8]; 4] = [&[0xF0, 1, 2], &[3, 4, 5], &[0xF8], &[6, 0xF7]];
+        for packet in packets {
+            p.handle(0, packet, &mut |ev| panic!("decoded {ev:?}"), &mut |b| {
+                raw.push(b.to_vec())
+            });
+        }
+        assert_eq!(
+            raw,
+            vec![vec![0xF0, 1, 2], vec![3, 4, 5], vec![0xF8], vec![6, 0xF7]]
+        );
+        // Channel messages decode again once the terminator has passed.
+        assert_eq!(feed(&mut p, &[&[0x90, 60, 100]]), vec![on(60)]);
     }
 
     #[test]

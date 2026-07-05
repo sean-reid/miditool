@@ -1,6 +1,7 @@
 mod backend;
 mod bench;
 mod build;
+mod config_path;
 mod doctor;
 mod pretty;
 mod scaffold;
@@ -90,7 +91,14 @@ fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Run { config } => run(config),
         Cmd::New { what } => match what {
-            NewWhat::Script { name } => scaffold::script(&name),
+            NewWhat::Script { name } => {
+                // Scripts live next to the config so its relative paths
+                // resolve; a working-directory config keeps them local.
+                let dir = config_path::resolve(None)
+                    .and_then(|(p, _)| p.parent().map(std::path::Path::to_path_buf))
+                    .unwrap_or_else(|| PathBuf::from("."));
+                scaffold::script(&name, &dir)
+            }
             NewWhat::Config { name } => scaffold::config(name.as_deref().unwrap_or("miditool")),
         },
         Cmd::Ports => ports(),
@@ -148,14 +156,33 @@ fn unhide(_name: Option<String>) -> anyhow::Result<()> {
 }
 
 fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
-    let path = config.unwrap_or_else(|| PathBuf::from("miditool.kdl"));
-    if !path.exists() {
-        bail!(
-            "no config at {}. Pass a path or create one; `miditool effects` lists the \
-             building blocks, and https://sean-reid.github.io/miditool/ has examples.",
-            path.display()
-        );
-    }
+    let path = match config_path::resolve(config) {
+        Some((path, source)) => {
+            if !path.exists() {
+                bail!(
+                    "no config at {}{}. Pass a path or create one; `miditool effects` lists \
+                     the building blocks, and https://sean-reid.github.io/miditool/ has examples.",
+                    path.display(),
+                    source.describe()
+                );
+            }
+            eprintln!("config: {}{}", path.display(), source.describe());
+            path
+        }
+        // First run: create the home config, a commented pass-through,
+        // and keep going with it.
+        None => {
+            let path = config_path::home_config()
+                .ok_or_else(|| anyhow::anyhow!("no home directory; pass a config path"))?;
+            scaffold::home_config(&path)?;
+            eprintln!(
+                "no config found, so a starter was created at {}. As written it passes \
+                 MIDI through untouched; edit it to add effects (`miditool effects`).",
+                path.display()
+            );
+            path
+        }
+    };
     let cfg = miditool_config::parse_file(&path).map_err(|e| {
         anyhow::anyhow!(
             "{e}\nrun `miditool effects` for the list of config nodes, or see \

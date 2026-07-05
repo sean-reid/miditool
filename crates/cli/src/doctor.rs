@@ -85,18 +85,23 @@ fn check_backend(checkup: &mut Checkup) {
 
 /// The config parses, if there is one to parse.
 fn check_config(checkup: &mut Checkup, config: Option<PathBuf>) {
-    let path = config.or_else(|| {
-        let default = PathBuf::from("miditool.kdl");
-        default.exists().then_some(default)
-    });
-    let Some(path) = path else {
-        checkup.ok("config: no miditool.kdl here; nothing to check");
+    let Some((path, source)) = crate::config_path::resolve(config) else {
+        checkup.ok("config: none found; `miditool run` will create a starter in the miditool home");
         return;
     };
+    if !path.exists() {
+        checkup.fail(format!(
+            "config {}{}: missing",
+            path.display(),
+            source.describe()
+        ));
+        return;
+    }
     match miditool_config::parse_file(&path) {
         Ok(cfg) => checkup.ok(format!(
-            "config {}: parses, {} scene{}",
+            "config {}{}: parses, {} scene{}",
             path.display(),
+            source.describe(),
             cfg.scenes.len(),
             plural(cfg.scenes.len()),
         )),

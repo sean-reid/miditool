@@ -23,7 +23,7 @@ miditool <command>
 miditool run [CONFIG]
 ```
 
-Runs the effect graph. `CONFIG` defaults to `./miditool.kdl`. The command holds the ports open, watches the config for [live edits](/miditool/guides/live-editing/), and winds down on Ctrl-C by releasing every held note.
+Runs the effect graph. Without `CONFIG`, the file is resolved in order: `MIDITOOL_CONFIG`, `./miditool.kdl`, then `~/.miditool/config.kdl` (created as a pass-through starter on first run; see [config files](/miditool/configuration/config-files/#where-miditool-looks)). The command prints which config won, holds the ports open, watches the config for [live edits](/miditool/guides/live-editing/), and winds down on Ctrl-C by releasing every held note.
 
 ```text
 miditool: Roland -> miditool Out (virtual). Ctrl-C to stop.

@@ -27,7 +27,7 @@ cd miditool
 cargo install --path crates/cli
 ```
 
-Check `miditool --version` to confirm the install. To verify a download out of band, every [GitHub release](https://github.com/sean-reid/miditool/releases) lists per-file sha256 sums alongside the binaries.
+Check `miditool --version` to confirm the install. From here, a bare `miditool run` already works: on first run it creates `~/.miditool/config.kdl`, a commented starter that passes your keyboard straight through, and every later run reads it until you pass a path or drop a `miditool.kdl` in the working directory. To verify a download out of band, every [GitHub release](https://github.com/sean-reid/miditool/releases) lists per-file sha256 sums alongside the binaries.
 
 ## Find your keyboard
 

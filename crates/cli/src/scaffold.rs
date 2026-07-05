@@ -67,14 +67,49 @@ output virtual="miditool Out"    // where the DAW listens; this is the default
 shuffle-lock seed=42             // scramble the keys; edit the seed to reroll
 "#;
 
-/// `miditool new script <name>`: write ./<name>.lua.
-pub fn script(name: &str) -> anyhow::Result<()> {
+/// `miditool new script <name>`: write <dir>/<name>.lua. The directory
+/// is the resolved config's home, so the config's relative script paths
+/// find it wherever the config lives.
+pub fn script(name: &str, dir: &Path) -> anyhow::Result<()> {
     let file = with_extension(name, "lua");
-    write_fresh(Path::new(&file), SCRIPT_TEMPLATE)?;
-    eprintln!("wrote {file}");
+    let path = dir.join(&file);
+    write_fresh(&path, SCRIPT_TEMPLATE)?;
+    eprintln!("wrote {}", path.display());
     eprintln!("next: add `script \"{file}\" seed=1` to your config, then `miditool run`.");
     eprintln!("the event reference: https://sean-reid.github.io/miditool/configuration/scripting/");
     Ok(())
+}
+
+/// The starter home config: every line commented, which is a valid
+/// config and a clean MIDI pass-through. Created on first run.
+const HOME_CONFIG_TEMPLATE: &str = r#"// Your miditool config. `miditool run` reads this file when there is no
+// ./miditool.kdl in the working directory and no path on the command line.
+// Every line below is optional; as written, MIDI passes through untouched.
+// `miditool effects` lists every node; docs: https://sean-reid.github.io/miditool/
+
+// Pick your keyboard by name substring (`miditool ports` lists the names).
+// On macOS, hide=true keeps apps like GarageBand from also hearing the
+// raw keyboard:
+// input "Roland" hide=true
+
+// Where the transformed stream goes; your DAW listens to this port.
+// This line is the default even when omitted:
+// output virtual="miditool Out"
+
+// Control miditool from a phone on your network:
+// remote port=8320 bind="0.0.0.0"
+
+// Try an effect (delete the // to enable):
+// shuffle-lock seed=42
+"#;
+
+/// Create the home config on first run. The parent directory is created
+/// as needed; an existing file is never touched.
+pub fn home_config(path: &Path) -> anyhow::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    }
+    write_fresh(path, HOME_CONFIG_TEMPLATE)
 }
 
 /// `miditool new config [<name>]`: write ./<name>.kdl.
@@ -124,6 +159,29 @@ mod tests {
     fn config_template_parses() {
         miditool_config::parse_str("template.kdl", CONFIG_TEMPLATE)
             .expect("the shipped config template should parse");
+    }
+
+    /// The first-run home config must parse and be a pure pass-through:
+    /// one implicit scene with an empty chain.
+    #[test]
+    fn home_config_template_is_a_valid_passthrough() {
+        let cfg = miditool_config::parse_str("config.kdl", HOME_CONFIG_TEMPLATE)
+            .expect("the home config template should parse");
+        assert_eq!(cfg.scenes.len(), 1);
+        assert!(cfg.scenes[0].chain.is_empty());
+        assert!(cfg.input.is_none());
+    }
+
+    #[test]
+    fn home_config_creates_parents_and_never_overwrites() {
+        let dir = std::env::temp_dir().join(format!("miditool-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("nested").join("config.kdl");
+        home_config(&path).expect("first creation succeeds");
+        std::fs::write(&path, "// edited").unwrap();
+        home_config(&path).expect_err("must refuse to overwrite");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "// edited");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

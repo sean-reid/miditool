@@ -13,13 +13,16 @@ Everything else, input and output selection, tempo, the remote, scenes, is optio
 
 ## Where miditool looks
 
-`miditool run` reads `./miditool.kdl` from the current directory. Pass a path to use another file:
+`miditool run` resolves its config in order, first hit wins:
 
-```sh
-miditool run examples/scrambled.kdl
-```
+1. A path on the command line: `miditool run examples/scrambled.kdl`
+2. The `MIDITOOL_CONFIG` environment variable
+3. `./miditool.kdl` in the working directory
+4. `~/.miditool/config.kdl`, the miditool home (set `MIDITOOL_HOME` to move it)
 
-`miditool doctor` validates the same file, or a path you give it.
+When nothing is found, the first run creates `~/.miditool/config.kdl` for you: a commented starter that passes MIDI through untouched until you enable something in it. The startup line names the config that won, and `miditool doctor` reports the same resolution.
+
+A working-directory `miditool.kdl` beats the home config on purpose: keep a folder per piece or per experiment, and the home config remains your everyday setup. Script paths always resolve relative to whichever config file is running, so scripts next to the home config travel with it.
 
 ## A KDL primer
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4](https://github.com/sean-reid/miditool/compare/v0.1.3...v0.1.4) (2026-07-05)
+
+
+### Features
+
+* config nodes and help for the pitch and serial wave ([8ac8ca9](https://github.com/sean-reid/miditool/commit/8ac8ca9e312305ae50908e25228f4373078f03a7))
+* nine pitch and serial effects with a sieve parser ([654167e](https://github.com/sean-reid/miditool/commit/654167e6b822c32ba5b525bef5d3642bb30b8629))
+
 ## [0.1.3](https://github.com/sean-reid/miditool/compare/v0.1.2...v0.1.3) (2026-07-05)
 
 

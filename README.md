@@ -2,6 +2,8 @@
 
 A MIDI mixing layer that sits between your keyboard and your DAW. It reads what you play, transforms it in real time, and hands the DAW a single altered stream: scrambled keys, stochastic note clouds, serial rows, velocity fields, and whatever else you can compose out of its effect graph.
 
+Documentation: https://sean-reid.github.io/miditool/
+
 Built for live performance on an 88-key piano: the processing path is allocation-free and adds no audible latency, every random effect is seeded and reproducible, and note-off correctness is guaranteed even when a mapping changes while a note is held.
 
 ## Status

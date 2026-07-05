@@ -3,6 +3,12 @@
 # Every KDL example in the docs is parsed by the real config crate first
 # (crates/config/tests/docs_examples.rs), so a page that drifts from the
 # shipped tool fails the deploy.
+#
+# Deployment is branch-based on purpose: the site is pushed to gh-pages
+# and served from there. The Pages deployments API (actions/deploy-pages)
+# intermittently rejects freshly created deployments with "try again
+# later" (actions/deploy-pages#406), which broke most deploys here; a
+# plain branch push avoids that API entirely.
 
 name: docs
 
@@ -16,9 +22,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -34,34 +38,22 @@ jobs:
       - name: Validate the KDL examples in the docs
         run: cargo test -p miditool-config --test docs_examples
 
-  build:
+  deploy:
     needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build the site
-        uses: withastro/action@v3
+      - uses: actions/setup-node@v4
         with:
-          path: ./docs
           node-version: 22
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      # The Pages backend intermittently rejects deployments that land
-      # close together ("try again later"); one delayed retry absorbs it.
-      - name: Deploy to GitHub Pages
-        id: deployment
-        continue-on-error: true
-        uses: actions/deploy-pages@v4
-      - name: Wait before retrying
-        if: steps.deployment.outcome == 'failure'
-        run: sleep 90
-      - name: Retry the deploy
-        id: retry
-        if: steps.deployment.outcome == 'failure'
-        uses: actions/deploy-pages@v4
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - name: Build the site
+        run: npm ci && npm run build
+        working-directory: docs
+      - name: Publish to the gh-pages branch
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs/dist
+          force_orphan: true

@@ -13,7 +13,8 @@
           "type": "generic",
           "path": "Cargo.toml"
         }
-      ]
+      ],
+      "draft": true
     }
   }
 }

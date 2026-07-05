@@ -296,3 +296,12 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
+
+  custom-publish-release:
+    needs:
+      - plan
+      - announce
+    uses: ./.github/workflows/publish-release.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit

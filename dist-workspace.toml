@@ -15,6 +15,10 @@ installers = ["shell", "powershell"]
 dispatch-releases = true
 # release-please creates the GitHub Release; dist only uploads assets to it
 create-release = false
+# After assets upload, a custom job publishes the draft release that
+# release-please created, so `releases/latest` never points at a release
+# without binaries
+post-announce-jobs = ["./publish-release"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 

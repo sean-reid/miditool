@@ -19,7 +19,7 @@ scene "tresillo" {
 
 // Every note sinks into a whisper-quiet band with a little seeded
 // jitter; added values stretch or hold back a share of them by 80ms,
-// and roughly twice a minute one note is pressed down even further.
+// and at most twice a minute one loud note escapes the cap unmodified.
 scene "feldman" {
     feldman-field seed=6 floor=6 ceiling=24 jitter=3
     added-value seed=11 unit="80ms" extend=0.4

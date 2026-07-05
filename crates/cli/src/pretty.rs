@@ -162,9 +162,9 @@ effects
       Route notes by touch: below low goes to the soft channel, above
       high to the loud one, everything between to medium.
   anti-accent level=30 every=\"30s\" seed=0
-      Seeded anti-accents: roughly once per every (at least 1s), one
-      note is pressed down to the level velocity, denting any accent
-      that tries to form.
+      Every note is capped at the level velocity, except one loud note
+      allowed through unmodified per every window (at least 1s): the
+      rare thunderclap in an otherwise soft field.
   mass-crescendo period=\"120s\" depth=0.6 shape=\"arch\"
       A slow tide under the dynamics: velocities swell by up to depth
       over each period, rising and falling (\"arch\") or rising and

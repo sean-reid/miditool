@@ -1,0 +1,13 @@
+[package]
+name = "miditool-script"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "User-defined Luau script effects for miditool"
+
+[dependencies]
+miditool-core.workspace = true
+mlua.workspace = true
+rand.workspace = true
+thiserror.workspace = true

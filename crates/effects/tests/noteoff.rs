@@ -221,6 +221,75 @@ proptest! {
     }
 }
 
+/// Chain-stage truncation must never split a self-contained on/off pair.
+/// Echo's transpose gives each copy its own key, so a per-key balance
+/// shows exactly which pairs would have been split: a stutter re-attack
+/// whose off was truncated away would leave its key with more ons than
+/// offs, a note stuck forever.
+#[test]
+fn chain_truncation_never_orphans_a_note_on() {
+    let mut node = Node::Chain(vec![
+        leaf(Echo::new(16, 1_000_000, 0.9, 1)),
+        leaf(Stutter::new(24, 10_000, 1.0)),
+    ]);
+    fn observe(net: &mut [i32; 128], out: &EventBuf) {
+        for ev in out {
+            match ev.kind {
+                EventKind::NoteOn { key, .. } => net[key as usize] += 1,
+                EventKind::NoteOff { key, .. } => net[key as usize] -= 1,
+                _ => {}
+            }
+        }
+    }
+    let cx = ProcCx::at(0);
+    let mut net = [0i32; 128];
+    // 17 echo copies each fanned out 49-fold by stutter: far past one
+    // EventBuf, so the chain stage must truncate.
+    let mut out = EventBuf::new();
+    node.process(
+        &Event::new(
+            0,
+            EventKind::NoteOn {
+                ch: 0,
+                key: 60,
+                vel: 100,
+            },
+        ),
+        &mut out,
+        &cx,
+    );
+    observe(&mut net, &out);
+    assert!(
+        cx.dropped.load(Ordering::Relaxed) > 0,
+        "the test must exercise truncation"
+    );
+    for (key, &n) in net.iter().enumerate() {
+        assert!(
+            (0..=1).contains(&n),
+            "key {key}: net {n} after the note-on (a split pair)"
+        );
+    }
+    // The player's note-off fans out only 17-fold: every surviving
+    // sustained copy ends. A leftover positive balance is a stuck note.
+    let mut out = EventBuf::new();
+    node.process(
+        &Event::new(
+            100_000_000,
+            EventKind::NoteOff {
+                ch: 0,
+                key: 60,
+                vel: 0,
+            },
+        ),
+        &mut out,
+        &cx,
+    );
+    observe(&mut net, &out);
+    for (key, &n) in net.iter().enumerate() {
+        assert!(n <= 0, "key {key}: net {n} after the note-off (stuck note)");
+    }
+}
+
 /// The widest configuration of each time-based effect, fed the loudest
 /// note-on, must fan out within one EventBuf and drop nothing.
 #[test]

@@ -41,6 +41,20 @@ impl ProcCx {
             self.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
+
+    /// Append two events atomically: both or neither. With fewer than two
+    /// slots left, both count as dropped. Effects that emit self-contained
+    /// note-on/note-off pairs (restrike, stutter) push them through here so
+    /// buffer truncation can never keep the on and drop the off, which
+    /// would leave the note stuck.
+    pub fn push_pair(&self, buf: &mut EventBuf, a: Event, b: Event) {
+        if buf.remaining_capacity() >= 2 {
+            buf.push(a);
+            buf.push(b);
+        } else {
+            self.dropped.fetch_add(2, Ordering::Relaxed);
+        }
+    }
 }
 
 /// A stateful event transformer. Implementations must be realtime-safe in
@@ -162,13 +176,16 @@ impl Node {
     }
 }
 
-/// Remove events in `out[mark..]` whose kind already appears in
+/// Remove events in `out[mark..]` that already appear in
 /// `out[start..mark]`: parallel branches emitting the identical event
-/// produce it once (the mididings merge rule).
+/// produce it once (the mididings merge rule). Whole events are compared,
+/// time included: a branch that re-emits an earlier branch's event at a
+/// later time (a delay, an echo tail) is producing a distinct event, not
+/// a duplicate, or the copy's note-off would vanish and the note stick.
 fn dedup_new(out: &mut EventBuf, start: usize, mark: usize) {
     let mut i = mark;
     while i < out.len() {
-        let duplicate = out[start..mark].iter().any(|e| e.kind == out[i].kind);
+        let duplicate = out[start..mark].iter().any(|e| *e == out[i]);
         if duplicate {
             out.remove(i);
         } else {
@@ -296,6 +313,99 @@ mod tests {
         );
     }
 
+    /// Re-emits every event shifted `.0` nanoseconds later.
+    struct DelayBy(u64);
+
+    impl Effect for DelayBy {
+        fn process(&mut self, ev: &Event, out: &mut EventBuf, cx: &ProcCx) {
+            cx.push(out, Event::new(ev.time + self.0, ev.kind));
+        }
+    }
+
+    /// A minimal echo: passes the event, then repeats each note twice at
+    /// 1000ns spacing with halved note-on velocity, like `echo decay 0.5`.
+    struct EchoTwice;
+
+    impl Effect for EchoTwice {
+        fn process(&mut self, ev: &Event, out: &mut EventBuf, cx: &ProcCx) {
+            cx.push(out, *ev);
+            for k in 1..=2u64 {
+                let kind = match ev.kind {
+                    EventKind::NoteOn { ch, key, vel } => EventKind::NoteOn {
+                        ch,
+                        key,
+                        vel: (vel >> k).max(1),
+                    },
+                    EventKind::NoteOff { .. } => ev.kind,
+                    _ => return,
+                };
+                cx.push(out, Event::new(ev.time + k * 1_000, kind));
+            }
+        }
+    }
+
+    fn run_timed(node: &mut Node, ev: Event) -> Vec<Event> {
+        let cx = ProcCx::at(ev.time);
+        let mut out = EventBuf::new();
+        node.process(&ev, &mut out, &cx);
+        out.iter().copied().collect()
+    }
+
+    #[test]
+    fn fork_keeps_a_delayed_copy_of_the_same_kind() {
+        // The delayed branch re-emits the pass branch's note-off with a
+        // later time: same kind, distinct event. Both must survive, or the
+        // delayed note never ends.
+        let mut node = Node::Fork(vec![
+            Node::Leaf(Box::new(Pass)),
+            Node::Leaf(Box::new(DelayBy(500))),
+        ]);
+        let off = EventKind::NoteOff {
+            ch: 0,
+            key: 60,
+            vel: 0,
+        };
+        assert_eq!(
+            run_timed(&mut node, Event::new(100, off)),
+            vec![Event::new(100, off), Event::new(600, off)]
+        );
+    }
+
+    #[test]
+    fn fork_pass_echo_stays_balanced_per_note() {
+        // fork { pass; echo }: the echo's note-off copies share the pass
+        // branch's kind but land later; deduping them would leave the
+        // decayed copies sounding forever.
+        let mut node = Node::Fork(vec![
+            Node::Leaf(Box::new(Pass)),
+            Node::Leaf(Box::new(EchoTwice)),
+        ]);
+        let mut all = run_timed(&mut node, note_on(60));
+        all.extend(run_timed(
+            &mut node,
+            Event::new(
+                500,
+                EventKind::NoteOff {
+                    ch: 0,
+                    key: 60,
+                    vel: 0,
+                },
+            ),
+        ));
+        let mut net = 0i32;
+        for e in &all {
+            match e.kind {
+                EventKind::NoteOn { ch: 0, key: 60, .. } => net += 1,
+                EventKind::NoteOff { ch: 0, key: 60, .. } => net -= 1,
+                other => panic!("unexpected event {other:?}"),
+            }
+        }
+        assert_eq!(net, 0, "unbalanced note-ons/offs: {all:?}");
+        // The original on and off each appear once (deduped across the
+        // branches), the two decayed copies bring their own offs.
+        assert_eq!(all.len(), 6, "events: {all:?}");
+    }
+
     #[test]
     fn filter_swallows_in_chain() {
         let mut node = Node::Chain(vec![
@@ -358,5 +468,22 @@ mod tests {
         node.process(&note_on(60), &mut out, &cx);
         assert_eq!(out.len(), MAX_FANOUT);
         assert_eq!(cx.dropped.load(Ordering::Relaxed), 10);
+    }
+
+    #[test]
+    fn push_pair_is_all_or_nothing() {
+        let cx = ProcCx::at(0);
+        let mut out = EventBuf::new();
+        for _ in 0..MAX_FANOUT - 3 {
+            out.push(note_on(1));
+        }
+        // Three slots left: the first pair fits, the second must not be
+        // split across the last slot.
+        cx.push_pair(&mut out, note_on(60), note_on(61));
+        assert_eq!(out.len(), MAX_FANOUT - 1);
+        cx.push_pair(&mut out, note_on(62), note_on(63));
+        assert_eq!(out.len(), MAX_FANOUT - 1);
+        assert_eq!(out.last(), Some(&note_on(61)));
+        assert_eq!(cx.dropped.load(Ordering::Relaxed), 2);
     }
 }

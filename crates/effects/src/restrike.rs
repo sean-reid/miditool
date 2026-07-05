@@ -82,9 +82,14 @@ impl Effect for Restrike {
             let scale = 1.0 + self.jitter as f64 * u;
             time = time.saturating_add((self.interval_ns as f64 * scale).round() as u64);
             let strike = EventKind::NoteOn { ch, key, vel };
-            push(out, cx, Event::new(time, strike));
             let release = EventKind::NoteOff { ch, key, vel: 0 };
-            push(out, cx, Event::new(time.saturating_add(hold), release));
+            // Pushed as a pair so truncation can never keep the on and
+            // drop the off, which would leave the restrike stuck.
+            cx.push_pair(
+                out,
+                Event::new(time, strike),
+                Event::new(time.saturating_add(hold), release),
+            );
         }
     }
 }
@@ -149,6 +154,31 @@ mod tests {
             .collect();
         assert_eq!(ons.len(), 25);
         assert!(ons.windows(2).all(|w| w[0] < w[1]), "times: {ons:?}");
+    }
+
+    #[test]
+    fn a_nearly_full_buffer_never_splits_a_pair() {
+        use miditool_core::MAX_FANOUT;
+
+        let mut fx = Restrike::new(1, 1_000, 0.0, 1.0, 1, 24);
+        let cx = ProcCx::at(0);
+        let mut out = EventBuf::new();
+        // Three slots left: the pass-through on, one whole pair, and one
+        // slot that must not receive a lone restrike on.
+        let filler = EventKind::PitchBend { ch: 0, value: 0 };
+        for _ in 0..MAX_FANOUT - 4 {
+            out.push(Event::new(0, filler));
+        }
+        fx.process(&Event::new(0, on(60)), &mut out, &cx);
+        let net: i32 = out
+            .iter()
+            .map(|ev| match ev.kind {
+                EventKind::NoteOn { .. } => 1,
+                EventKind::NoteOff { .. } => -1,
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(net, 1, "only the original on awaits the player's off");
     }
 
     #[test]

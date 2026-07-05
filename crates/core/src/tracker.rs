@@ -62,27 +62,40 @@ impl NoteTracker {
     }
 
     /// Append the events that silence everything this tracker has seen:
-    /// a note-off per sounding note plus sustain-up for held pedals.
-    /// Resets the tracker.
+    /// a note-off per sounding note plus sustain-up for held pedals,
+    /// clearing each slot as it is emitted. A full buffer stops the walk
+    /// with the remaining slots intact, so callers loop until a call
+    /// leaves the buffer with room to spare, at which point nothing was
+    /// left unsaid.
     pub fn silence(&mut self, time: u64, out: &mut EventBuf) {
-        let sounding = std::mem::take(&mut self.sounding);
-        sounding.for_each(|ch, key, count| {
-            if count > 0 && !out.is_full() {
-                out.push(Event::new(time, EventKind::NoteOff { ch, key, vel: 0 }));
-            }
-        });
-        let pedals = std::mem::take(&mut self.sustain_down);
         for ch in 0..16u8 {
-            if pedals & (1 << ch) != 0 && !out.is_full() {
-                out.push(Event::new(
-                    time,
-                    EventKind::ControlChange {
-                        ch,
-                        cc: CC_SUSTAIN,
-                        value: 0,
-                    },
-                ));
+            for key in 0..128u8 {
+                if self.sounding.get(ch, key) == 0 {
+                    continue;
+                }
+                if out.is_full() {
+                    return;
+                }
+                out.push(Event::new(time, EventKind::NoteOff { ch, key, vel: 0 }));
+                self.sounding.set(ch, key, 0);
             }
+        }
+        for ch in 0..16u8 {
+            if self.sustain_down & (1 << ch) == 0 {
+                continue;
+            }
+            if out.is_full() {
+                return;
+            }
+            out.push(Event::new(
+                time,
+                EventKind::ControlChange {
+                    ch,
+                    cc: CC_SUSTAIN,
+                    value: 0,
+                },
+            ));
+            self.sustain_down &= !(1 << ch);
         }
     }
 }
@@ -145,6 +158,43 @@ mod tests {
             value: 0
         }));
         assert_eq!(t.active(), 0);
+    }
+
+    #[test]
+    fn silence_past_a_full_buffer_keeps_the_rest_for_the_next_call() {
+        let mut t = NoteTracker::new();
+        for ch in 0..2u8 {
+            for key in 0..75u8 {
+                t.observe(&EventKind::NoteOn { ch, key, vel: 100 });
+            }
+        }
+        t.observe(&EventKind::ControlChange {
+            ch: 1,
+            cc: CC_SUSTAIN,
+            value: 127,
+        });
+        assert_eq!(t.active(), 150);
+
+        // One EventBuf holds 128 events; the 22 notes and the pedal that
+        // did not fit must survive for a second call, not be forgotten.
+        let mut out = EventBuf::new();
+        t.silence(0, &mut out);
+        assert_eq!(out.len(), 128);
+        assert_eq!(t.active(), 22);
+
+        let mut out = EventBuf::new();
+        t.silence(0, &mut out);
+        assert_eq!(out.len(), 23);
+        assert_eq!(t.active(), 0);
+        assert_eq!(
+            out.last().map(|e| e.kind),
+            Some(EventKind::ControlChange {
+                ch: 1,
+                cc: CC_SUSTAIN,
+                value: 0
+            })
+        );
+        assert!(!out.is_full(), "a spare slot signals the walk finished");
     }
 
     #[test]

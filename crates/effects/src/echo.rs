@@ -24,6 +24,12 @@ use crate::router::push;
 ///
 /// Fanout bound: at most `1 + repeats` outputs per input, and `repeats`
 /// is clamped to 16, so 17 events, well under `MAX_FANOUT`.
+///
+/// Overflow caveat: a copy's note-on and note-off come from different
+/// input events, so unlike restrike and stutter they cannot be pushed as
+/// an all-or-nothing pair. If an upstream fanout fills the buffer, a
+/// copy's on or off can drop alone; a lone echo never gets close to that
+/// limit by itself.
 pub struct Echo {
     repeats: u8,
     delta_ns: u64,

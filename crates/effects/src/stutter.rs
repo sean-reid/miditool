@@ -56,13 +56,14 @@ impl Effect for Stutter {
             } else {
                 self.gap(k + 1) / 2
             };
-            push(
-                out,
-                cx,
-                Event::new(time, EventKind::NoteOn { ch, key, vel }),
-            );
             let release = EventKind::NoteOff { ch, key, vel: 0 };
-            push(out, cx, Event::new(time.saturating_add(hold), release));
+            // Pushed as a pair so truncation can never keep the on and
+            // drop the off, which would leave the re-attack stuck.
+            cx.push_pair(
+                out,
+                Event::new(time, EventKind::NoteOn { ch, key, vel }),
+                Event::new(time.saturating_add(hold), release),
+            );
         }
     }
 }
@@ -145,6 +146,31 @@ mod tests {
         let mut fx = Stutter::new(2, 1_000, 0.1);
         let out = run_timed(&mut fx, 0, on(60));
         assert_eq!(out[3].time, 1_250);
+    }
+
+    #[test]
+    fn a_nearly_full_buffer_never_splits_a_pair() {
+        use miditool_core::MAX_FANOUT;
+
+        let mut fx = Stutter::new(24, 100, 1.0);
+        let cx = ProcCx::at(0);
+        let mut out = EventBuf::new();
+        // Three slots left: the pass-through on, one whole pair, and one
+        // slot that must not receive a lone re-attack on.
+        let filler = EventKind::PitchBend { ch: 0, value: 0 };
+        for _ in 0..MAX_FANOUT - 4 {
+            out.push(Event::new(0, filler));
+        }
+        fx.process(&Event::new(0, on(60)), &mut out, &cx);
+        let net: i32 = out
+            .iter()
+            .map(|ev| match ev.kind {
+                EventKind::NoteOn { .. } => 1,
+                EventKind::NoteOff { .. } => -1,
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(net, 1, "only the original on awaits the player's off");
     }
 
     #[test]

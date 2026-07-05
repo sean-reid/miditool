@@ -1,0 +1,26 @@
+// Stochastic clouds, two ways: Xenakis grain sprays with freshly rolled
+// velocities, and Cowell forearm clusters ringing inside a sympathetic
+// halo, kept breathable by a density governor.
+//
+// Everything random is seeded, so the same playing gives the same music.
+
+input "Roland"
+output virtual="miditool Clouds"
+
+tempo 84                             // beats= times below follow this
+
+// Each key press bursts into a grain cloud around the played note; the
+// dice then reroll every grain's velocity across most of the range.
+scene "clouds" {
+    poisson-cloud seed=17 density=12 duration="1.5s" sigma=9.0 vel-sigma=12.0 max=20
+    velocity-dice seed=4 lo=30 hi=110
+}
+
+// One note, one white-key fistful anchored at the bottom; a quiet halo
+// rings around each cluster, and the governor holds the storm near six
+// notes a second.
+scene "cowell" {
+    cluster-fist width=6 kind="white" anchor="bottom" rolloff=0.7
+    resonance-halo width=2 level=0.2 decay="2s"
+    density-governor target=6 window="1s" seed=3
+}

@@ -4,8 +4,8 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use miditool_config::{
-    Config, EffectSpec, OutputSpec, RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap,
-    TimeSpec, parse_str,
+    ClusterAnchor, ClusterKind, Config, EffectSpec, OutputSpec, RemoteSpec, RowForm, SceneSpec,
+    ShuffleMode, SieveSnap, TimeSpec, parse_str,
 };
 
 fn parse(text: &str) -> Config {
@@ -1503,6 +1503,531 @@ fn empty_script_path_is_rejected() {
         msg.contains("script") && msg.contains("empty"),
         "error should state the constraint: {msg}"
     );
+}
+
+#[test]
+fn clouds_example_parses_exactly() {
+    let config = parse(include_str!("../../../examples/clouds.kdl"));
+    assert_eq!(
+        config,
+        Config {
+            input: Some("Roland".to_owned()),
+            hide_input: false,
+            output: OutputSpec::Virtual("miditool Clouds".to_owned()),
+            tempo: 84.0,
+            remote: None,
+            scenes: vec![
+                SceneSpec {
+                    name: "clouds".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::PoissonCloud {
+                            seed: 17,
+                            density: 12.0,
+                            duration: TimeSpec::Millis(1500.0),
+                            sigma: 9.0,
+                            vel_sigma: 12.0,
+                            max: 20,
+                        },
+                        EffectSpec::VelocityDiceUniform {
+                            seed: 4,
+                            lo: 30,
+                            hi: 110,
+                        },
+                    ],
+                },
+                SceneSpec {
+                    name: "cowell".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::ClusterFist {
+                            kind: ClusterKind::White,
+                            width: 6,
+                            anchor: ClusterAnchor::Bottom,
+                            rolloff: 0.7,
+                        },
+                        EffectSpec::ResonanceHalo {
+                            width: 2,
+                            level: 0.2,
+                            decay: TimeSpec::Millis(2000.0),
+                            sieve: None,
+                        },
+                        EffectSpec::DensityGovernor {
+                            seed: 3,
+                            target: 6.0,
+                            window: TimeSpec::Millis(1000.0),
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+}
+
+#[test]
+fn poisson_cloud_defaults() {
+    assert_eq!(
+        parse_chain("poisson-cloud seed=1"),
+        vec![EffectSpec::PoissonCloud {
+            seed: 1,
+            density: 8.0,
+            duration: TimeSpec::Millis(2000.0),
+            sigma: 7.0,
+            vel_sigma: 10.0,
+            max: 16,
+        }]
+    );
+}
+
+#[test]
+fn poisson_cloud_full_form_with_beats() {
+    assert_eq!(
+        parse_chain("poisson-cloud seed=2 density=20 beats=4 sigma=3.5 vel-sigma=0.0 max=8"),
+        vec![EffectSpec::PoissonCloud {
+            seed: 2,
+            density: 20.0,
+            duration: TimeSpec::Beats(4.0),
+            sigma: 3.5,
+            vel_sigma: 0.0,
+            max: 8,
+        }]
+    );
+}
+
+#[test]
+fn poisson_cloud_requires_a_seed() {
+    let msg = parse_err("poisson-cloud density=8.0");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn poisson_cloud_duration_and_beats_are_mutually_exclusive() {
+    let msg = parse_err("poisson-cloud seed=1 duration=\"2s\" beats=1");
+    assert!(
+        msg.contains("duration") && msg.contains("mutually exclusive"),
+        "error should use the node's property name: {msg}"
+    );
+}
+
+#[test]
+fn poisson_cloud_range_errors() {
+    let msg = parse_err("poisson-cloud seed=1 density=0.05");
+    assert!(
+        msg.contains("poisson-cloud") && msg.contains("density") && msg.contains("0.1..=50"),
+        "{msg}"
+    );
+    let msg = parse_err("poisson-cloud seed=1 density=51");
+    assert!(msg.contains("0.1..=50") && msg.contains("51"), "{msg}");
+    let msg = parse_err("poisson-cloud seed=1 sigma=-0.5");
+    assert!(msg.contains("sigma") && msg.contains("0..=24"), "{msg}");
+    let msg = parse_err("poisson-cloud seed=1 sigma=24.5");
+    assert!(msg.contains("0..=24"), "upper bound: {msg}");
+    let msg = parse_err("poisson-cloud seed=1 vel-sigma=40.5");
+    assert!(msg.contains("vel-sigma") && msg.contains("0..=40"), "{msg}");
+    let msg = parse_err("poisson-cloud seed=1 vel-sigma=-1.0");
+    assert!(msg.contains("0..=40"), "lower bound: {msg}");
+    let msg = parse_err("poisson-cloud seed=1 max=0");
+    assert!(msg.contains("max") && msg.contains("1..=24"), "{msg}");
+    let msg = parse_err("poisson-cloud seed=1 max=25");
+    assert!(msg.contains("1..=24") && msg.contains("25"), "{msg}");
+}
+
+#[test]
+fn note_roulette_defaults() {
+    assert_eq!(
+        parse_chain("note-roulette seed=6"),
+        vec![EffectSpec::NoteRoulette {
+            seed: 6,
+            pass: 0.6,
+            replace: 0.3,
+            lo: 21,
+            hi: 108,
+        }]
+    );
+}
+
+#[test]
+fn note_roulette_full_form() {
+    assert_eq!(
+        parse_chain("note-roulette seed=6 pass=0.5 replace=0.5 lo=36 hi=96"),
+        vec![EffectSpec::NoteRoulette {
+            seed: 6,
+            pass: 0.5,
+            replace: 0.5,
+            lo: 36,
+            hi: 96,
+        }]
+    );
+}
+
+#[test]
+fn note_roulette_requires_a_seed() {
+    let msg = parse_err("note-roulette pass=0.5");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn note_roulette_pass_and_replace_must_not_sum_past_one() {
+    let msg = parse_err("note-roulette seed=1 pass=0.7 replace=0.4");
+    assert!(
+        msg.contains("pass=0.7") && msg.contains("replace=0.4") && msg.contains("at most 1"),
+        "error should name both probabilities: {msg}"
+    );
+}
+
+#[test]
+fn note_roulette_range_errors() {
+    let msg = parse_err("note-roulette seed=1 pass=1.5");
+    assert!(
+        msg.contains("note-roulette") && msg.contains("pass") && msg.contains("0..=1"),
+        "{msg}"
+    );
+    let msg = parse_err("note-roulette seed=1 replace=-0.1");
+    assert!(msg.contains("replace") && msg.contains("0..=1"), "{msg}");
+    let msg = parse_err("note-roulette seed=1 hi=128");
+    assert!(msg.contains("0..=127") && msg.contains("128"), "{msg}");
+    let msg = parse_err("note-roulette seed=1 lo=61 hi=60");
+    assert!(msg.contains("lo=61"), "lo must not exceed hi: {msg}");
+}
+
+#[test]
+fn velocity_dice_defaults_to_the_full_velocity_range() {
+    assert_eq!(
+        parse_chain("velocity-dice seed=2"),
+        vec![EffectSpec::VelocityDiceUniform {
+            seed: 2,
+            lo: 1,
+            hi: 127,
+        }]
+    );
+}
+
+#[test]
+fn velocity_dice_sigma_wins_over_range() {
+    assert_eq!(
+        parse_chain("velocity-dice seed=2 lo=30 hi=110 sigma=15.0"),
+        vec![EffectSpec::VelocityDiceGaussian {
+            seed: 2,
+            sigma: 15.0,
+        }]
+    );
+}
+
+#[test]
+fn velocity_dice_requires_a_seed() {
+    let msg = parse_err("velocity-dice sigma=15.0");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn velocity_dice_range_errors() {
+    let msg = parse_err("velocity-dice seed=1 lo=0");
+    assert!(
+        msg.contains("velocity-dice") && msg.contains("lo") && msg.contains("1..=127"),
+        "{msg}"
+    );
+    let msg = parse_err("velocity-dice seed=1 hi=128");
+    assert!(msg.contains("1..=127") && msg.contains("128"), "{msg}");
+    let msg = parse_err("velocity-dice seed=1 lo=100 hi=50");
+    assert!(msg.contains("lo=100"), "lo must not exceed hi: {msg}");
+    let msg = parse_err("velocity-dice seed=1 sigma=0.05");
+    assert!(msg.contains("sigma") && msg.contains("0.1..=40"), "{msg}");
+    let msg = parse_err("velocity-dice seed=1 sigma=40.5");
+    assert!(msg.contains("0.1..=40"), "upper bound: {msg}");
+}
+
+#[test]
+fn duration_lottery_defaults() {
+    assert_eq!(
+        parse_chain("duration-lottery seed=8"),
+        vec![EffectSpec::DurationLottery {
+            seed: 8,
+            mean: TimeSpec::Millis(500.0),
+            min: TimeSpec::Millis(30.0),
+            max: TimeSpec::Millis(4000.0),
+            uniform: false,
+        }]
+    );
+}
+
+#[test]
+fn duration_lottery_full_form() {
+    assert_eq!(
+        parse_chain(
+            "duration-lottery seed=8 mean=\"1s\" min=\"100ms\" max=\"2s\" spread=\"uniform\""
+        ),
+        vec![EffectSpec::DurationLottery {
+            seed: 8,
+            mean: TimeSpec::Millis(1000.0),
+            min: TimeSpec::Millis(100.0),
+            max: TimeSpec::Millis(2000.0),
+            uniform: true,
+        }]
+    );
+}
+
+#[test]
+fn duration_lottery_mean_accepts_beats() {
+    // Only the mean follows the duration-or-beats convention; min= and
+    // max= stay plain duration strings.
+    assert_eq!(
+        parse_chain("duration-lottery seed=8 beats=0.5"),
+        vec![EffectSpec::DurationLottery {
+            seed: 8,
+            mean: TimeSpec::Beats(0.5),
+            min: TimeSpec::Millis(30.0),
+            max: TimeSpec::Millis(4000.0),
+            uniform: false,
+        }]
+    );
+}
+
+#[test]
+fn duration_lottery_requires_a_seed() {
+    let msg = parse_err("duration-lottery mean=\"1s\"");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn duration_lottery_ordering_errors() {
+    let msg = parse_err("duration-lottery seed=1 mean=\"500ms\" min=\"600ms\"");
+    assert!(
+        msg.contains("duration-lottery") && msg.contains("min=600ms") && msg.contains("mean=500ms"),
+        "min must not exceed mean: {msg}"
+    );
+    let msg = parse_err("duration-lottery seed=1 mean=\"5s\" max=\"4s\"");
+    assert!(
+        msg.contains("mean=5000ms") && msg.contains("max=4000ms"),
+        "mean must not exceed max: {msg}"
+    );
+    // With the mean in beats the mean check waits for the tempo, but a
+    // min above the max is wrong regardless.
+    let msg = parse_err("duration-lottery seed=1 beats=1 min=\"5s\" max=\"1s\"");
+    assert!(
+        msg.contains("min=5000ms") && msg.contains("max=1000ms"),
+        "min must not exceed max: {msg}"
+    );
+}
+
+#[test]
+fn duration_lottery_bad_spread_is_rejected() {
+    let msg = parse_err("duration-lottery seed=1 spread=\"gauss\"");
+    assert!(
+        msg.contains("gauss") && msg.contains("exp") && msg.contains("uniform"),
+        "error should show the bad spread and the alternatives: {msg}"
+    );
+}
+
+#[test]
+fn density_governor_defaults() {
+    assert_eq!(
+        parse_chain("density-governor target=6"),
+        vec![EffectSpec::DensityGovernor {
+            seed: 0,
+            target: 6.0,
+            window: TimeSpec::Millis(2000.0),
+        }]
+    );
+}
+
+#[test]
+fn density_governor_full_form_with_beats() {
+    assert_eq!(
+        parse_chain("density-governor target=2.5 beats=4 seed=9"),
+        vec![EffectSpec::DensityGovernor {
+            seed: 9,
+            target: 2.5,
+            window: TimeSpec::Beats(4.0),
+        }]
+    );
+}
+
+#[test]
+fn density_governor_requires_a_target() {
+    let msg = parse_err("density-governor");
+    assert!(
+        msg.contains("target"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn density_governor_target_range_errors() {
+    let msg = parse_err("density-governor target=0.05");
+    assert!(
+        msg.contains("density-governor") && msg.contains("target") && msg.contains("0.1..=100"),
+        "{msg}"
+    );
+    let msg = parse_err("density-governor target=101");
+    assert!(msg.contains("0.1..=100") && msg.contains("101"), "{msg}");
+}
+
+#[test]
+fn cluster_fist_defaults() {
+    assert_eq!(
+        parse_chain("cluster-fist"),
+        vec![EffectSpec::ClusterFist {
+            kind: ClusterKind::Chromatic,
+            width: 4,
+            anchor: ClusterAnchor::Center,
+            rolloff: 0.8,
+        }]
+    );
+}
+
+#[test]
+fn cluster_fist_kinds_and_anchors() {
+    let chain = parse_chain(
+        "cluster-fist kind=\"white\" anchor=\"bottom\"\n\
+         cluster-fist kind=\"black\" anchor=\"top\"\n\
+         cluster-fist kind=\"sieve\" sieve=\"8@0|8@3\"",
+    );
+    assert_eq!(
+        chain,
+        vec![
+            EffectSpec::ClusterFist {
+                kind: ClusterKind::White,
+                width: 4,
+                anchor: ClusterAnchor::Bottom,
+                rolloff: 0.8,
+            },
+            EffectSpec::ClusterFist {
+                kind: ClusterKind::Black,
+                width: 4,
+                anchor: ClusterAnchor::Top,
+                rolloff: 0.8,
+            },
+            EffectSpec::ClusterFist {
+                kind: ClusterKind::Sieve("8@0|8@3".to_owned()),
+                width: 4,
+                anchor: ClusterAnchor::Center,
+                rolloff: 0.8,
+            },
+        ]
+    );
+}
+
+#[test]
+fn cluster_fist_sieve_kind_requires_an_expression() {
+    let msg = parse_err("cluster-fist kind=\"sieve\"");
+    assert!(
+        msg.contains("cluster-fist") && msg.contains("kind=\"sieve\"") && msg.contains("sieve="),
+        "error should ask for the expression: {msg}"
+    );
+}
+
+#[test]
+fn cluster_fist_sieve_without_sieve_kind_is_rejected() {
+    let msg = parse_err("cluster-fist kind=\"white\" sieve=\"8@0\"");
+    assert!(
+        msg.contains("cluster-fist") && msg.contains("kind=\"sieve\""),
+        "error should say what sieve= needs: {msg}"
+    );
+    let msg = parse_err("cluster-fist sieve=\"8@0\"");
+    assert!(
+        msg.contains("kind=\"sieve\""),
+        "the default kind is chromatic: {msg}"
+    );
+}
+
+#[test]
+fn cluster_fist_empty_sieve_expression_is_rejected() {
+    let msg = parse_err("cluster-fist kind=\"sieve\" sieve=\"\"");
+    assert!(
+        msg.contains("cluster-fist") && msg.contains("empty"),
+        "error should state the constraint: {msg}"
+    );
+}
+
+#[test]
+fn cluster_fist_range_errors() {
+    let msg = parse_err("cluster-fist width=1");
+    assert!(
+        msg.contains("cluster-fist") && msg.contains("width") && msg.contains("2..=12"),
+        "{msg}"
+    );
+    let msg = parse_err("cluster-fist width=13");
+    assert!(msg.contains("2..=12") && msg.contains("13"), "{msg}");
+    let msg = parse_err("cluster-fist rolloff=1.5");
+    assert!(msg.contains("rolloff") && msg.contains("0..=1"), "{msg}");
+    let msg = parse_err("cluster-fist rolloff=-0.1");
+    assert!(msg.contains("0..=1"), "lower bound: {msg}");
+}
+
+#[test]
+fn cluster_fist_bad_kind_and_anchor_are_rejected() {
+    let msg = parse_err("cluster-fist kind=\"forearm\"");
+    assert!(
+        msg.contains("forearm") && msg.contains("chromatic") && msg.contains("sieve"),
+        "error should show the bad kind and the alternatives: {msg}"
+    );
+    let msg = parse_err("cluster-fist anchor=\"middle\"");
+    assert!(
+        msg.contains("middle") && msg.contains("center") && msg.contains("bottom"),
+        "error should show the bad anchor and the alternatives: {msg}"
+    );
+}
+
+#[test]
+fn resonance_halo_defaults() {
+    assert_eq!(
+        parse_chain("resonance-halo"),
+        vec![EffectSpec::ResonanceHalo {
+            width: 3,
+            level: 0.25,
+            decay: TimeSpec::Millis(3000.0),
+            sieve: None,
+        }]
+    );
+}
+
+#[test]
+fn resonance_halo_full_form_with_beats() {
+    assert_eq!(
+        parse_chain("resonance-halo width=1 level=0.5 beats=2 sieve=\"8@0|8@3\""),
+        vec![EffectSpec::ResonanceHalo {
+            width: 1,
+            level: 0.5,
+            decay: TimeSpec::Beats(2.0),
+            sieve: Some("8@0|8@3".to_owned()),
+        }]
+    );
+}
+
+#[test]
+fn resonance_halo_empty_sieve_expression_is_rejected() {
+    let msg = parse_err("resonance-halo sieve=\"\"");
+    assert!(
+        msg.contains("resonance-halo") && msg.contains("empty"),
+        "error should state the constraint: {msg}"
+    );
+}
+
+#[test]
+fn resonance_halo_range_errors() {
+    let msg = parse_err("resonance-halo width=0");
+    assert!(
+        msg.contains("resonance-halo") && msg.contains("width") && msg.contains("1..=6"),
+        "{msg}"
+    );
+    let msg = parse_err("resonance-halo width=7");
+    assert!(msg.contains("1..=6") && msg.contains("7"), "{msg}");
+    let msg = parse_err("resonance-halo level=1.5");
+    assert!(msg.contains("level") && msg.contains("0..=1"), "{msg}");
+    let msg = parse_err("resonance-halo level=-0.1");
+    assert!(msg.contains("0..=1"), "lower bound: {msg}");
 }
 
 #[test]

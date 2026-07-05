@@ -118,6 +118,34 @@ effects
   blocked-keys 60 64 67
       Drop the listed keys; with by-class=true they are pitch classes
       0-11, blocked in every octave.
+  poisson-cloud seed=<u64> density=8.0 duration=\"2s\" sigma=7.0 vel-sigma=10.0 max=16
+      Each note-on sprays a seeded cloud of grains: density grains per
+      second for the duration, pitches and velocities spread Gaussian
+      (sigma, vel-sigma) around the note, at most max grains.
+  note-roulette seed=<u64> pass=0.6 replace=0.3 lo=21 hi=108
+      Seeded roulette per note: passed through, replaced by a random
+      key in lo..hi, or dropped (the leftover share). pass and replace
+      sum to at most 1.
+  velocity-dice seed=<u64> lo=1 hi=127
+  velocity-dice seed=<u64> sigma=15.0
+      Reroll every note-on velocity with seeded dice: uniform over
+      lo..hi, or Gaussian around the played velocity when sigma is
+      given.
+  duration-lottery seed=<u64> mean=\"500ms\" min=\"30ms\" max=\"4s\" spread=\"exp\"
+      Draw each note's length from a seeded lottery around the mean
+      (or beats=), clamped to min..max; spread=\"uniform\" flattens the
+      draw. min= and max= are plain durations.
+  density-governor target=<notes/s> window=\"2s\" seed=0
+      Thin the stream toward target notes per second over a sliding
+      window; the excess is dropped by seeded lottery.
+  cluster-fist width=4 kind=\"chromatic\" anchor=\"center\" rolloff=0.8
+      Cowell clusters: each note lands as a fistful of width keys,
+      chromatic, white, black, or kind=\"sieve\" sieve=\"8@0|8@3\",
+      anchored bottom/center/top, edges fading by rolloff.
+  resonance-halo width=3 level=0.25 decay=\"3s\"
+      Ghost sympathetic resonance: each note adds a halo of width
+      neighbors at level velocity, fading over decay; sieve=\"...\"
+      confines the halo to sieve keys.
   velocity-curve gamma=1.0 floor=1 ceiling=127
       Reshape touch: gamma below 1 lifts soft playing, above 1 compresses
       it. Output maps into floor..ceiling.
@@ -166,8 +194,8 @@ its own chain, and switch=\"kill\" cuts sounding notes when you leave it
 a scene switcher to browsers on the given port; without bind= it stays
 on this machine, and bind=\"0.0.0.0\" opens it to the local network.
 
-Time properties (time=, interval=, first=) take \"250ms\" or \"1.5s\", or
-beats=0.5 against the tempo. Randomness is deterministic: the same seed
+Any time-measuring property (time=, interval=, duration=, and so on)
+takes \"250ms\" or \"1.5s\", or beats=0.5 against the tempo. Randomness is deterministic: the same seed
 always gives the same result. The script node's Lua API is documented at
 https://sean-reid.github.io/miditool/configuration/scripting/.
 ";

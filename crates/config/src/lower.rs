@@ -6,8 +6,8 @@ use std::net::IpAddr;
 
 use crate::ast;
 use crate::{
-    Config, ConfigError, EffectSpec, OutputSpec, RemoteSpec, RowForm, SceneSpec, ShuffleMode,
-    SieveSnap, TimeSpec,
+    ClusterAnchor, ClusterKind, Config, ConfigError, EffectSpec, OutputSpec, RemoteSpec, RowForm,
+    SceneSpec, ShuffleMode, SieveSnap, TimeSpec,
 };
 
 /// Output port name used when the config has no `output` node.
@@ -510,6 +510,172 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
                 snap: sieve_snap(snap)?,
             }
         }
+        E::PoissonCloud {
+            seed,
+            density,
+            duration,
+            beats,
+            sigma,
+            vel_sigma,
+            max,
+        } => EffectSpec::PoissonCloud {
+            seed,
+            density: float_range(
+                "poisson-cloud",
+                "density",
+                density.map_or(8.0, |ast::Number(d)| d),
+                0.1,
+                50.0,
+            )?,
+            duration: time_spec_or("poisson-cloud", "duration", duration, beats, 2000.0)?,
+            sigma: float_range("poisson-cloud", "sigma", sigma.unwrap_or(7.0), 0.0, 24.0)?,
+            vel_sigma: float_range(
+                "poisson-cloud",
+                "vel-sigma",
+                vel_sigma.unwrap_or(10.0),
+                0.0,
+                40.0,
+            )?,
+            max: bounded("poisson-cloud", "max", max.unwrap_or(16), 1, 24)?,
+        },
+        E::NoteRoulette {
+            seed,
+            pass,
+            replace,
+            lo,
+            hi,
+        } => {
+            let pass = fraction("note-roulette", "pass", pass.unwrap_or(0.6))?;
+            let replace = fraction("note-roulette", "replace", replace.unwrap_or(0.3))?;
+            if pass + replace > 1.0 {
+                return Err(ConfigError::invalid(
+                    "note-roulette",
+                    format!(
+                        "pass={pass} and replace={replace} must sum to at most 1, \
+                         got {}",
+                        pass + replace
+                    ),
+                ));
+            }
+            let (lo, hi) = key_range("note-roulette", lo, hi, DEFAULT_LO, DEFAULT_HI)?;
+            EffectSpec::NoteRoulette {
+                seed,
+                pass,
+                replace,
+                lo,
+                hi,
+            }
+        }
+        E::VelocityDice {
+            seed,
+            lo,
+            hi,
+            sigma,
+        } => match sigma {
+            // sigma wins over lo/hi when both are given, like loose-keys.
+            Some(sigma) => EffectSpec::VelocityDiceGaussian {
+                seed,
+                sigma: float_range("velocity-dice", "sigma", sigma, 0.1, 40.0)?,
+            },
+            None => {
+                let lo = velocity("velocity-dice", "lo", lo.unwrap_or(1))?;
+                let hi = velocity("velocity-dice", "hi", hi.unwrap_or(127))?;
+                ordered("velocity-dice", "lo", lo, "hi", hi)?;
+                EffectSpec::VelocityDiceUniform { seed, lo, hi }
+            }
+        },
+        E::DurationLottery {
+            seed,
+            mean,
+            beats,
+            min,
+            max,
+            spread,
+        } => {
+            let mean = time_spec_or("duration-lottery", "mean", mean, beats, 500.0)?;
+            let min = match min {
+                None => TimeSpec::Millis(30.0),
+                Some(text) => duration("duration-lottery", "min", &text)?,
+            };
+            let max = match max {
+                None => TimeSpec::Millis(4000.0),
+                Some(text) => duration("duration-lottery", "max", &text)?,
+            };
+            // min and max are always absolute; the mean is comparable
+            // here unless it was given in beats, in which case the CLI
+            // finishes the check once the tempo resolves it.
+            let (TimeSpec::Millis(min_ms), TimeSpec::Millis(max_ms)) = (min, max) else {
+                unreachable!("min and max lower from duration strings");
+            };
+            if let TimeSpec::Millis(mean_ms) = mean {
+                if min_ms > mean_ms {
+                    return Err(ConfigError::invalid(
+                        "duration-lottery",
+                        format!("min={min_ms}ms must not exceed mean={mean_ms}ms"),
+                    ));
+                }
+                if mean_ms > max_ms {
+                    return Err(ConfigError::invalid(
+                        "duration-lottery",
+                        format!("mean={mean_ms}ms must not exceed max={max_ms}ms"),
+                    ));
+                }
+            } else if min_ms > max_ms {
+                return Err(ConfigError::invalid(
+                    "duration-lottery",
+                    format!("min={min_ms}ms must not exceed max={max_ms}ms"),
+                ));
+            }
+            EffectSpec::DurationLottery {
+                seed,
+                mean,
+                min,
+                max,
+                uniform: lottery_uniform(spread)?,
+            }
+        }
+        E::DensityGovernor {
+            target: ast::Number(target),
+            window,
+            beats,
+            seed,
+        } => EffectSpec::DensityGovernor {
+            seed: seed.unwrap_or(0),
+            target: float_range("density-governor", "target", target, 0.1, 100.0)?,
+            window: time_spec_or("density-governor", "window", window, beats, 2000.0)?,
+        },
+        E::ClusterFist {
+            width,
+            kind,
+            anchor,
+            rolloff,
+            sieve,
+        } => EffectSpec::ClusterFist {
+            kind: cluster_kind(kind, sieve)?,
+            width: bounded("cluster-fist", "width", width.unwrap_or(4), 2, 12)?,
+            anchor: cluster_anchor(anchor)?,
+            rolloff: fraction("cluster-fist", "rolloff", rolloff.unwrap_or(0.8))?,
+        },
+        E::ResonanceHalo {
+            width,
+            level,
+            decay,
+            beats,
+            sieve,
+        } => {
+            if sieve.as_deref() == Some("") {
+                return Err(ConfigError::invalid(
+                    "resonance-halo",
+                    "the sieve expression must not be empty",
+                ));
+            }
+            EffectSpec::ResonanceHalo {
+                width: bounded("resonance-halo", "width", width.unwrap_or(3), 1, 6)?,
+                level: fraction("resonance-halo", "level", level.unwrap_or(0.25))?,
+                decay: time_spec_or("resonance-halo", "decay", decay, beats, 3000.0)?,
+                sieve,
+            }
+        }
         E::Script { path, seed } => {
             if path.is_empty() {
                 return Err(ConfigError::invalid(
@@ -566,6 +732,21 @@ fn time_spec(
             node,
             format!("expected either {prop}=\"250ms\" or beats=0.5"),
         )),
+    }
+}
+
+/// Like [`time_spec`], but the property is optional: when neither the
+/// duration string nor `beats=` is present, fall back to `default_ms`.
+fn time_spec_or(
+    node: &'static str,
+    prop: &str,
+    time: Option<String>,
+    beats: Option<ast::Number>,
+    default_ms: f64,
+) -> Result<TimeSpec, ConfigError> {
+    match (time, beats) {
+        (None, None) => Ok(TimeSpec::Millis(default_ms)),
+        (time, beats) => time_spec(node, prop, time, beats),
     }
 }
 
@@ -719,6 +900,24 @@ fn fraction(node: &'static str, prop: &str, value: f64) -> Result<f32, ConfigErr
     }
 }
 
+/// A float property confined to `lo..=hi` and finite.
+fn float_range(
+    node: &'static str,
+    prop: &str,
+    value: f64,
+    lo: f64,
+    hi: f64,
+) -> Result<f32, ConfigError> {
+    if value.is_finite() && (lo..=hi).contains(&value) {
+        Ok(value as f32)
+    } else {
+        Err(ConfigError::invalid(
+            node,
+            format!("{prop} must be within {lo}..={hi}, got {value}"),
+        ))
+    }
+}
+
 /// A `row-snap` row: exactly 12 arguments, together a permutation of the
 /// pitch classes 0..=11. The error for a broken permutation names what is
 /// duplicated and what is missing.
@@ -786,6 +985,72 @@ fn sieve_snap(snap: Option<String>) -> Result<SieveSnap, ConfigError> {
         Some(other) => Err(ConfigError::invalid(
             "sieve",
             format!("snap must be \"nearest\", \"up\", \"down\", or \"drop\", got \"{other}\""),
+        )),
+    }
+}
+
+/// Resolve a `cluster-fist` kind and its `sieve=` companion: the sieve
+/// expression is required exactly when the kind is `"sieve"`, and only
+/// checked for non-emptiness here (the CLI parses it at build).
+fn cluster_kind(kind: Option<String>, sieve: Option<String>) -> Result<ClusterKind, ConfigError> {
+    let kind = match kind.as_deref() {
+        None | Some("chromatic") => ClusterKind::Chromatic,
+        Some("white") => ClusterKind::White,
+        Some("black") => ClusterKind::Black,
+        Some("sieve") => match sieve {
+            Some(expr) if !expr.is_empty() => return Ok(ClusterKind::Sieve(expr)),
+            Some(_) => {
+                return Err(ConfigError::invalid(
+                    "cluster-fist",
+                    "the sieve expression must not be empty",
+                ));
+            }
+            None => {
+                return Err(ConfigError::invalid(
+                    "cluster-fist",
+                    "kind=\"sieve\" requires a sieve=\"...\" expression",
+                ));
+            }
+        },
+        Some(other) => {
+            return Err(ConfigError::invalid(
+                "cluster-fist",
+                format!(
+                    "kind must be \"chromatic\", \"white\", \"black\", or \"sieve\", \
+                     got \"{other}\""
+                ),
+            ));
+        }
+    };
+    if sieve.is_some() {
+        return Err(ConfigError::invalid(
+            "cluster-fist",
+            "sieve= only applies with kind=\"sieve\"",
+        ));
+    }
+    Ok(kind)
+}
+
+fn cluster_anchor(anchor: Option<String>) -> Result<ClusterAnchor, ConfigError> {
+    match anchor.as_deref() {
+        None | Some("center") => Ok(ClusterAnchor::Center),
+        Some("bottom") => Ok(ClusterAnchor::Bottom),
+        Some("top") => Ok(ClusterAnchor::Top),
+        Some(other) => Err(ConfigError::invalid(
+            "cluster-fist",
+            format!("anchor must be \"bottom\", \"center\", or \"top\", got \"{other}\""),
+        )),
+    }
+}
+
+/// `duration-lottery`'s spread: `"exp"` (the default) or `"uniform"`.
+fn lottery_uniform(spread: Option<String>) -> Result<bool, ConfigError> {
+    match spread.as_deref() {
+        None | Some("exp") => Ok(false),
+        Some("uniform") => Ok(true),
+        Some(other) => Err(ConfigError::invalid(
+            "duration-lottery",
+            format!("spread must be \"exp\" or \"uniform\", got \"{other}\""),
         )),
     }
 }

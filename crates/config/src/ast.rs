@@ -302,6 +302,92 @@ pub(crate) enum Effect {
         #[knus(property)]
         snap: Option<String>,
     },
+    PoissonCloud {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        density: Option<Number>,
+        #[knus(property)]
+        duration: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        sigma: Option<f64>,
+        #[knus(property)]
+        vel_sigma: Option<f64>,
+        #[knus(property)]
+        max: Option<i64>,
+    },
+    NoteRoulette {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        pass: Option<f64>,
+        #[knus(property)]
+        replace: Option<f64>,
+        #[knus(property)]
+        lo: Option<i64>,
+        #[knus(property)]
+        hi: Option<i64>,
+    },
+    VelocityDice {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        lo: Option<i64>,
+        #[knus(property)]
+        hi: Option<i64>,
+        #[knus(property)]
+        sigma: Option<f64>,
+    },
+    DurationLottery {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        mean: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        min: Option<String>,
+        #[knus(property)]
+        max: Option<String>,
+        #[knus(property)]
+        spread: Option<String>,
+    },
+    DensityGovernor {
+        #[knus(property)]
+        target: Number,
+        #[knus(property)]
+        window: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        seed: Option<u64>,
+    },
+    ClusterFist {
+        #[knus(property)]
+        width: Option<i64>,
+        #[knus(property)]
+        kind: Option<String>,
+        #[knus(property)]
+        anchor: Option<String>,
+        #[knus(property)]
+        rolloff: Option<f64>,
+        #[knus(property)]
+        sieve: Option<String>,
+    },
+    ResonanceHalo {
+        #[knus(property)]
+        width: Option<i64>,
+        #[knus(property)]
+        level: Option<f64>,
+        #[knus(property)]
+        decay: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        sieve: Option<String>,
+    },
     Script {
         #[knus(argument)]
         path: String,

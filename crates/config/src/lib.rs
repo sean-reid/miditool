@@ -170,6 +170,34 @@ pub enum SieveSnap {
     Drop,
 }
 
+/// What keys a `cluster-fist` cluster is built from.
+///
+/// The `Sieve` form carries its expression as written; the CLI parses it
+/// against `miditool-core`'s sieve grammar when it builds the graph, so
+/// this crate only checks that it is non-empty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClusterKind {
+    /// Every key.
+    Chromatic,
+    /// White keys only.
+    White,
+    /// Black keys only.
+    Black,
+    /// Keys on a Xenakis sieve, kept as the written expression.
+    Sieve(String),
+}
+
+/// Where a `cluster-fist` cluster sits relative to the played key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClusterAnchor {
+    /// The played key is the cluster's lowest note.
+    Bottom,
+    /// The cluster spreads evenly around the played key.
+    Center,
+    /// The played key is the cluster's highest note.
+    Top,
+}
+
 /// One effect node, validated and ready to compile into the effect graph.
 ///
 /// Ranges are inclusive throughout. Channels are stored 0-based (the wire
@@ -291,6 +319,77 @@ pub enum EffectSpec {
     /// `miditool-core`'s sieve grammar when it builds the graph, so this
     /// crate only checks that it is non-empty.
     Sieve { expr: String, snap: SieveSnap },
+    /// Spray a seeded Poisson cloud of grains from each note-on:
+    /// `density` grains per second for `duration`, pitches spread
+    /// `sigma` semitones and velocities `vel_sigma` steps (both
+    /// Gaussian) around the played note, at most `max` grains.
+    PoissonCloud {
+        seed: u64,
+        density: f32,
+        duration: TimeSpec,
+        sigma: f32,
+        vel_sigma: f32,
+        max: u8,
+    },
+    /// A seeded roulette per note: pass it through with probability
+    /// `pass`, replace it with a uniform key from `lo..=hi` with
+    /// probability `replace`, and drop it otherwise. The two
+    /// probabilities sum to at most 1.
+    NoteRoulette {
+        seed: u64,
+        pass: f32,
+        replace: f32,
+        lo: u8,
+        hi: u8,
+    },
+    /// Reroll each note-on velocity as a uniform draw from `lo..=hi`.
+    VelocityDiceUniform { seed: u64, lo: u8, hi: u8 },
+    /// Reroll each note-on velocity as a gaussian draw around the
+    /// played velocity.
+    VelocityDiceGaussian { seed: u64, sigma: f32 },
+    /// Draw each note's length from a seeded lottery around `mean`,
+    /// clamped to `min..=max`: exponential by default, flat over the
+    /// clamp range when `uniform`.
+    ///
+    /// Only the mean follows the usual duration pair (`mean="500ms"` or
+    /// the node's single `beats=`); `min=` and `max=` are plain duration
+    /// strings, so the node keeps the one-`beats=`-per-node convention
+    /// the other timed effects use. `min <= mean <= max` is checked here
+    /// when the mean is absolute, and by the CLI after the tempo
+    /// resolves a `beats=` mean.
+    DurationLottery {
+        seed: u64,
+        mean: TimeSpec,
+        min: TimeSpec,
+        max: TimeSpec,
+        uniform: bool,
+    },
+    /// Thin the note stream toward `target` notes per second, measured
+    /// over a sliding `window`; the excess is dropped by seeded lottery.
+    DensityGovernor {
+        seed: u64,
+        target: f32,
+        window: TimeSpec,
+    },
+    /// Turn each note into a Cowell-style cluster of `width` keys drawn
+    /// from `kind`, anchored to the played key, edge velocities scaled
+    /// by `rolloff`.
+    ClusterFist {
+        kind: ClusterKind,
+        width: u8,
+        anchor: ClusterAnchor,
+        rolloff: f32,
+    },
+    /// Add a ghost halo of `width` neighbors around each note at
+    /// `level` of its velocity, fading over `decay`; a sieve expression
+    /// (kept as written, parsed by the CLI) confines the halo to sieve
+    /// keys.
+    ResonanceHalo {
+        width: u8,
+        level: f32,
+        decay: TimeSpec,
+        sieve: Option<String>,
+    },
     /// Run a Luau script on every event: `script "wedge.lua" seed=42`.
     /// The path is kept exactly as written; the CLI resolves it against
     /// the config file's directory when it builds the graph, so parsing

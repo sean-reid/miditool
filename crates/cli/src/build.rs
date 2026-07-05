@@ -2,12 +2,15 @@
 
 use std::path::Path;
 
-use miditool_config::{EffectSpec, OutputSpec, RowForm, ShuffleMode, SieveSnap};
+use miditool_config::{
+    ClusterAnchor, ClusterKind, EffectSpec, OutputSpec, RowForm, ShuffleMode, SieveSnap,
+};
 use miditool_core::graph::{Discard, Filter, Node, Pass};
 use miditool_effects::{
-    AggregateGate, BlockedKeys, Channelize, Delay, Echo, KeyDist, Klangfarben, LooseKeys,
-    RegistralScatter, Restrike, RingMod, RowSnap, ShuffleLock, SieveQuantizer, Stutter, Telescope,
-    Transpose, VelocityCurve, WedgeMirror,
+    AggregateGate, BlockedKeys, Channelize, ClusterFist, Delay, DensityGovernor, DurationLottery,
+    Echo, KeyDist, Klangfarben, LooseKeys, NoteRoulette, PoissonCloud, RegistralScatter,
+    ResonanceHalo, Restrike, RingMod, RowSnap, ShuffleLock, SieveQuantizer, Stutter, Telescope,
+    Transpose, VelDist, VelocityCurve, VelocityDice, WedgeMirror,
 };
 use miditool_io::OutputTarget;
 
@@ -142,6 +145,99 @@ fn build_node(spec: EffectSpec, tempo: f32, base: &Path) -> Result<Node, String>
                 .map_err(|e| format!("sieve \"{expr}\": {e}"))?;
             Node::Leaf(Box::new(SieveQuantizer::new(sieve, sieve_snap(snap))))
         }
+        EffectSpec::PoissonCloud {
+            seed,
+            density,
+            duration,
+            sigma,
+            vel_sigma,
+            max,
+        } => Node::Leaf(Box::new(PoissonCloud::new(
+            seed,
+            density,
+            duration.to_nanos(tempo),
+            sigma,
+            vel_sigma,
+            max,
+        ))),
+        EffectSpec::NoteRoulette {
+            seed,
+            pass,
+            replace,
+            lo,
+            hi,
+        } => Node::Leaf(Box::new(NoteRoulette::new(seed, pass, replace, lo, hi))),
+        EffectSpec::VelocityDiceUniform { seed, lo, hi } => Node::Leaf(Box::new(
+            VelocityDice::new(seed, VelDist::Uniform { lo, hi }),
+        )),
+        EffectSpec::VelocityDiceGaussian { seed, sigma } => Node::Leaf(Box::new(
+            VelocityDice::new(seed, VelDist::Gaussian { sigma }),
+        )),
+        EffectSpec::DurationLottery {
+            seed,
+            mean,
+            min,
+            max,
+            uniform,
+        } => {
+            let mean_ns = mean.to_nanos(tempo);
+            let min_ns = min.to_nanos(tempo);
+            let max_ns = max.to_nanos(tempo);
+            // The config checks the ordering when the mean is absolute;
+            // a beats= mean is only comparable here, once the tempo has
+            // resolved it.
+            if !(min_ns <= mean_ns && mean_ns <= max_ns) {
+                return Err(format!(
+                    "duration-lottery: min <= mean <= max must hold once beats resolve, \
+                     got min={}ms mean={}ms max={}ms",
+                    min_ns / 1_000_000,
+                    mean_ns / 1_000_000,
+                    max_ns / 1_000_000,
+                ));
+            }
+            Node::Leaf(Box::new(DurationLottery::new(
+                seed, mean_ns, min_ns, max_ns, uniform,
+            )))
+        }
+        EffectSpec::DensityGovernor {
+            seed,
+            target,
+            window,
+        } => Node::Leaf(Box::new(DensityGovernor::new(
+            seed,
+            target,
+            window.to_nanos(tempo),
+        ))),
+        EffectSpec::ClusterFist {
+            kind,
+            width,
+            anchor,
+            rolloff,
+        } => Node::Leaf(Box::new(ClusterFist::new(
+            cluster_kind(kind)?,
+            width,
+            cluster_anchor(anchor),
+            rolloff,
+        ))),
+        EffectSpec::ResonanceHalo {
+            width,
+            level,
+            decay,
+            sieve,
+        } => {
+            let sieve = sieve
+                .map(|expr| {
+                    miditool_core::sieve::Sieve::parse(&expr)
+                        .map_err(|e| format!("resonance-halo sieve \"{expr}\": {e}"))
+                })
+                .transpose()?;
+            Node::Leaf(Box::new(ResonanceHalo::new(
+                width,
+                level,
+                decay.to_nanos(tempo),
+                sieve,
+            )))
+        }
         EffectSpec::Script { path, seed } => {
             let resolved = base.join(&path);
             let effect = miditool_script::ScriptEffect::from_file(&resolved, seed)
@@ -165,6 +261,27 @@ fn row_form(form: RowForm) -> miditool_effects::RowForm {
         RowForm::Inversion => miditool_effects::RowForm::Inversion,
         RowForm::Retrograde => miditool_effects::RowForm::Retrograde,
         RowForm::RetrogradeInversion => miditool_effects::RowForm::RetrogradeInversion,
+    }
+}
+
+fn cluster_kind(kind: ClusterKind) -> Result<miditool_effects::ClusterKind, String> {
+    Ok(match kind {
+        ClusterKind::Chromatic => miditool_effects::ClusterKind::Chromatic,
+        ClusterKind::White => miditool_effects::ClusterKind::White,
+        ClusterKind::Black => miditool_effects::ClusterKind::Black,
+        ClusterKind::Sieve(expr) => {
+            let sieve = miditool_core::sieve::Sieve::parse(&expr)
+                .map_err(|e| format!("cluster-fist sieve \"{expr}\": {e}"))?;
+            miditool_effects::ClusterKind::Sieve(sieve)
+        }
+    })
+}
+
+fn cluster_anchor(anchor: ClusterAnchor) -> miditool_effects::ClusterAnchor {
+    match anchor {
+        ClusterAnchor::Bottom => miditool_effects::ClusterAnchor::Bottom,
+        ClusterAnchor::Center => miditool_effects::ClusterAnchor::Center,
+        ClusterAnchor::Top => miditool_effects::ClusterAnchor::Top,
     }
 }
 

@@ -3,13 +3,16 @@
 
 use std::sync::atomic::Ordering;
 
+use miditool_core::event::CC_SUSTAIN;
 use miditool_core::{
     Effect, Event, EventBuf, EventKind, MAX_FANOUT, Node, NoteTracker, ProcCx, Sieve,
 };
 use miditool_effects::{
-    AggregateGate, BlockedKeys, Channelize, Delay, Echo, KeyDist, Klangfarben, LooseKeys,
-    RegistralScatter, Restrike, RingMod, RowForm, RowSnap, ShuffleLock, ShuffleMode,
-    SieveQuantizer, SieveSnap, Stutter, Telescope, Transpose, VelocityCurve, WedgeMirror,
+    AggregateGate, BlockedKeys, Channelize, ClusterAnchor, ClusterFist, ClusterKind, Delay,
+    DensityGovernor, DurationLottery, Echo, KeyDist, Klangfarben, LooseKeys, NoteRoulette,
+    PoissonCloud, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowForm, RowSnap,
+    ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap, Stutter, Telescope, Transpose, VelDist,
+    VelocityCurve, VelocityDice, WedgeMirror,
 };
 use proptest::prelude::*;
 
@@ -61,6 +64,23 @@ fn snaps() -> impl Strategy<Value = SieveSnap> {
     ]
 }
 
+fn cluster_kinds() -> impl Strategy<Value = ClusterKind> {
+    prop_oneof![
+        Just(ClusterKind::Chromatic),
+        Just(ClusterKind::White),
+        Just(ClusterKind::Black),
+        sieves().prop_map(ClusterKind::Sieve),
+    ]
+}
+
+fn anchors() -> impl Strategy<Value = ClusterAnchor> {
+    prop_oneof![
+        Just(ClusterAnchor::Bottom),
+        Just(ClusterAnchor::Center),
+        Just(ClusterAnchor::Top),
+    ]
+}
+
 fn rows() -> impl Strategy<Value = [u8; 12]> {
     Just((0u8..12).collect::<Vec<u8>>())
         .prop_shuffle()
@@ -105,25 +125,28 @@ fn balanced(steps: &[Step]) -> Vec<Step> {
     all
 }
 
-fn assert_no_orphans(node: &mut Node, steps: &[Step]) {
+fn step_kind(step: &Step) -> EventKind {
+    if step.on {
+        EventKind::NoteOn {
+            ch: step.ch,
+            key: step.key,
+            vel: step.vel,
+        }
+    } else {
+        EventKind::NoteOff {
+            ch: step.ch,
+            key: step.key,
+            vel: 0,
+        }
+    }
+}
+
+fn assert_no_orphans_kinds(node: &mut Node, kinds: &[EventKind]) {
     let mut tracker = NoteTracker::new();
     let cx = ProcCx::at(0);
-    for (i, step) in steps.iter().enumerate() {
-        let kind = if step.on {
-            EventKind::NoteOn {
-                ch: step.ch,
-                key: step.key,
-                vel: step.vel,
-            }
-        } else {
-            EventKind::NoteOff {
-                ch: step.ch,
-                key: step.key,
-                vel: 0,
-            }
-        };
+    for (i, kind) in kinds.iter().enumerate() {
         let mut out = EventBuf::new();
-        node.process(&Event::new(i as u64, kind), &mut out, &cx);
+        node.process(&Event::new(i as u64, *kind), &mut out, &cx);
         for ev in &out {
             tracker.observe(&ev.kind);
         }
@@ -134,6 +157,11 @@ fn assert_no_orphans(node: &mut Node, steps: &[Step]) {
         tracker.observe(&ev.kind);
     }
     assert_eq!(tracker.active(), 0, "orphaned notes at the output");
+}
+
+fn assert_no_orphans(node: &mut Node, steps: &[Step]) {
+    let kinds: Vec<EventKind> = steps.iter().map(step_kind).collect();
+    assert_no_orphans_kinds(node, &kinds);
 }
 
 fn leaf(fx: impl Effect + 'static) -> Node {
@@ -318,6 +346,110 @@ proptest! {
         assert_no_orphans(&mut leaf(SieveQuantizer::new(sieve, snap)), &steps);
     }
 
+    // The passed-through original needs the player's off; the grains are
+    // self-contained pairs, so the tracker still ends at zero.
+    #[test]
+    fn poisson_cloud_no_orphans(
+        steps in steps(),
+        seed: u64,
+        density in 0.0f32..=1_000.0,
+        duration in 0u64..=2_000_000_000,
+        pitch_sigma in 0.0f32..=60.0,
+        vel_sigma in 0.0f32..=60.0,
+        max_grains in 0u8..=30,
+    ) {
+        let fx = PoissonCloud::new(seed, density, duration, pitch_sigma, vel_sigma, max_grains);
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    #[test]
+    fn note_roulette_no_orphans(
+        steps in steps(),
+        seed: u64,
+        pass in 0.0f32..=2.0,
+        replace in 0.0f32..=2.0,
+        lo in 0u8..128,
+        hi in 0u8..128,
+    ) {
+        assert_no_orphans(&mut leaf(NoteRoulette::new(seed, pass, replace, lo, hi)), &steps);
+    }
+
+    #[test]
+    fn velocity_dice_uniform_no_orphans(
+        steps in steps(),
+        seed: u64,
+        lo in 0u8..128,
+        hi in 0u8..128,
+    ) {
+        let fx = VelocityDice::new(seed, VelDist::Uniform { lo, hi });
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    #[test]
+    fn velocity_dice_gaussian_no_orphans(steps in steps(), seed: u64, sigma in 0.0f32..=60.0) {
+        let fx = VelocityDice::new(seed, VelDist::Gaussian { sigma });
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    // Raw sequences on purpose: the lottery swallows the player's offs and
+    // every on carries its own drawn off, so the tracker ends at zero even
+    // over unbalanced input.
+    #[test]
+    fn duration_lottery_no_orphans(
+        steps in steps(),
+        seed: u64,
+        mean in 0u64..=2_000_000_000,
+        min in 0u64..=1_000_000,
+        max in 0u64..=2_000_000_000,
+        uniform: bool,
+    ) {
+        let fx = DurationLottery::new(seed, mean, min, max, uniform);
+        assert_no_orphans(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn density_governor_no_orphans(
+        steps in steps(),
+        seed: u64,
+        target in 0.0f32..=200.0,
+        window in 0u64..=2_000_000_000,
+    ) {
+        assert_no_orphans(&mut leaf(DensityGovernor::new(seed, target, window)), &steps);
+    }
+
+    // Sequences stay short: flush emits up to 12 offs per active note, and
+    // that total must fit one EventBuf.
+    #[test]
+    fn cluster_fist_no_orphans(
+        steps in steps(),
+        kind in cluster_kinds(),
+        width in 0u8..=16,
+        anchor in anchors(),
+        rolloff in 0.0f32..=1.5,
+    ) {
+        let fx = ClusterFist::new(kind, width, anchor, rolloff);
+        assert_no_orphans(&mut leaf(fx), &steps[..steps.len().min(10)]);
+    }
+
+    // The pedal goes down first so halos actually deposit; they are
+    // self-contained pairs, so balanced input still ends at zero.
+    #[test]
+    fn resonance_halo_no_orphans(
+        steps in steps(),
+        width in 0u8..=8,
+        level in 0.0f32..=2.0,
+        decay in 0u64..=1_000_000_000,
+        sieve in prop::option::of(sieves()),
+    ) {
+        let mut kinds = vec![
+            EventKind::ControlChange { ch: 0, cc: CC_SUSTAIN, value: 127 },
+            EventKind::ControlChange { ch: 1, cc: CC_SUSTAIN, value: 127 },
+        ];
+        kinds.extend(balanced(&steps).iter().map(step_kind));
+        let fx = ResonanceHalo::new(width, level, decay, sieve);
+        assert_no_orphans_kinds(&mut leaf(fx), &kinds);
+    }
+
     // Echo repeats stay small here: Transpose's flush emits one note-off
     // per note it tracks, up to (1 + repeats) keys per input note-on, and
     // that total must fit one EventBuf.
@@ -438,4 +570,98 @@ fn worst_case_fanout_fits_the_buffer() {
         assert!(out.len() <= MAX_FANOUT, "{name}: over MAX_FANOUT");
         assert_eq!(cx.dropped.load(Ordering::Relaxed), 0, "{name}: dropped");
     }
+}
+
+/// The widest configuration of each stochastic and cluster effect, fed the
+/// loudest note-on, must fan out within one EventBuf and drop nothing.
+#[test]
+fn stochastic_worst_case_fanout_fits_the_buffer() {
+    let on = Event::new(
+        0,
+        EventKind::NoteOn {
+            ch: 0,
+            key: 60,
+            vel: 127,
+        },
+    );
+    let cases: Vec<(&str, Box<dyn Effect>, usize)> = vec![
+        (
+            "note_roulette",
+            Box::new(NoteRoulette::new(0, 1.0, 0.0, 0, 127)),
+            1,
+        ),
+        (
+            "velocity_dice",
+            Box::new(VelocityDice::new(0, VelDist::Uniform { lo: 1, hi: 127 })),
+            1,
+        ),
+        (
+            "duration_lottery",
+            Box::new(DurationLottery::new(0, 1, 1, u64::MAX, false)),
+            2,
+        ),
+        (
+            "density_governor",
+            Box::new(DensityGovernor::new(0, 0.0, u64::MAX)),
+            1,
+        ),
+        (
+            "cluster_fist",
+            Box::new(ClusterFist::new(
+                ClusterKind::Chromatic,
+                u8::MAX,
+                ClusterAnchor::Center,
+                0.9,
+            )),
+            12,
+        ),
+    ];
+    for (name, mut fx, expected) in cases {
+        let cx = ProcCx::at(0);
+        let mut out = EventBuf::new();
+        fx.process(&on, &mut out, &cx);
+        assert_eq!(out.len(), expected, "{name}: fanout");
+        assert!(out.len() <= MAX_FANOUT, "{name}: over MAX_FANOUT");
+        assert_eq!(cx.dropped.load(Ordering::Relaxed), 0, "{name}: dropped");
+    }
+
+    // A retrigger of the widest cluster cuts 12 members and strikes 12.
+    let mut fx = ClusterFist::new(ClusterKind::Chromatic, 12, ClusterAnchor::Center, 0.9);
+    let cx = ProcCx::at(0);
+    let mut out = EventBuf::new();
+    fx.process(&on, &mut out, &cx);
+    out.clear();
+    fx.process(&on, &mut out, &cx);
+    assert_eq!(out.len(), 24, "cluster_fist retrigger fanout");
+    assert_eq!(cx.dropped.load(Ordering::Relaxed), 0);
+
+    // The widest halo under the pedal: the passed note plus 12 pairs.
+    let mut fx = ResonanceHalo::new(6, 1.0, u64::MAX, None);
+    let cx = ProcCx::at(0);
+    let mut out = EventBuf::new();
+    let pedal = EventKind::ControlChange {
+        ch: 0,
+        cc: CC_SUSTAIN,
+        value: 127,
+    };
+    fx.process(&Event::new(0, pedal), &mut out, &cx);
+    out.clear();
+    fx.process(&on, &mut out, &cx);
+    assert_eq!(out.len(), 1 + 4 * 6, "resonance_halo fanout");
+    assert_eq!(cx.dropped.load(Ordering::Relaxed), 0);
+
+    // The densest, longest cloud: the count is seed-dependent but bounded
+    // by 1 + 2 * max_grains, and an effectively unthinned cloud keeps
+    // every arrival.
+    let mut fx = PoissonCloud::new(0, 10_000.0, u64::MAX, 0.0, 0.0, u8::MAX);
+    let cx = ProcCx::at(0);
+    let mut out = EventBuf::new();
+    fx.process(&on, &mut out, &cx);
+    assert_eq!(out.len(), 1 + 2 * 24, "poisson_cloud fanout");
+    assert!(out.len() <= MAX_FANOUT, "poisson_cloud: over MAX_FANOUT");
+    assert_eq!(
+        cx.dropped.load(Ordering::Relaxed),
+        0,
+        "poisson_cloud: dropped"
+    );
 }

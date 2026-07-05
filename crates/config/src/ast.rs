@@ -5,8 +5,9 @@
 //! range checks live in [`crate::lower`], where they can produce errors
 //! that name the node and the constraint.
 
-/// A whole config document. `input` and `output` are matched by name
-/// wherever they appear; every other top-level node must be an effect.
+/// A whole config document. `input`, `output`, `tempo`, `remote`, and
+/// `scene` are matched by name wherever they appear; every other
+/// top-level node must be an effect.
 #[derive(Debug, knus::Decode)]
 pub(crate) struct Document {
     /// `input "<substring>" hide=#true`
@@ -18,7 +19,14 @@ pub(crate) struct Document {
     /// `tempo 96`
     #[knus(child)]
     pub tempo: Option<Tempo>,
-    /// The implicit top-level chain.
+    /// `remote port=8320`
+    #[knus(child)]
+    pub remote: Option<Remote>,
+    /// `scene "name" { ... }` blocks. Mutually exclusive with bare
+    /// effects; [`crate::lower`] enforces that.
+    #[knus(children(name = "scene"))]
+    pub scenes: Vec<Scene>,
+    /// Bare effects: the implicit top-level chain.
     #[knus(children)]
     pub effects: Vec<Effect>,
 }
@@ -48,6 +56,26 @@ pub(crate) struct Output {
 pub(crate) struct Tempo {
     #[knus(argument)]
     pub bpm: Number,
+}
+
+/// The `remote` node: a TCP port for the phone/tablet web remote. The
+/// port stays wide here; [`crate::lower`] range-checks it into a `u16`.
+#[derive(Debug, knus::Decode)]
+pub(crate) struct Remote {
+    #[knus(property)]
+    pub port: i64,
+}
+
+/// A `scene` node: a name, an optional `switch=` behavior, and the
+/// scene's chain of effects as children.
+#[derive(Debug, knus::Decode)]
+pub(crate) struct Scene {
+    #[knus(argument)]
+    pub name: String,
+    #[knus(property)]
+    pub switch: Option<String>,
+    #[knus(children)]
+    pub effects: Vec<Effect>,
 }
 
 /// A numeric scalar decoded from an integer or a decimal literal.

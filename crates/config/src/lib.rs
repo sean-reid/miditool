@@ -11,9 +11,25 @@
 //! velocity-curve gamma=0.8
 //! ```
 //!
-//! Parsing produces a plain [`Config`] of [`EffectSpec`] values. This crate
-//! knows nothing about the runtime effect graph; the CLI maps specs onto
-//! `miditool-core` nodes.
+//! Effects can instead be grouped into named `scene` blocks, each carrying
+//! its own chain; bare effects lower to a single scene named "main". The
+//! two styles do not mix. An optional `remote` node opens the phone/tablet
+//! web remote for switching scenes:
+//!
+//! ```kdl
+//! remote port=8320
+//!
+//! scene "scrambled" {
+//!     shuffle-lock seed=42
+//! }
+//! scene "echo storm" switch="kill" {
+//!     echo repeats=6 time="300ms" decay=0.8
+//! }
+//! ```
+//!
+//! Parsing produces a plain [`Config`] of [`SceneSpec`] and [`EffectSpec`]
+//! values. This crate knows nothing about the runtime effect graph; the
+//! CLI maps specs onto `miditool-core` nodes.
 //!
 //! Channels are 1-16 in config files, matching what keyboards print on
 //! their panels, and 0-15 in the parsed spec, matching the wire format.
@@ -39,7 +55,26 @@ pub struct Config {
     /// Beats per minute, from the top-level `tempo` node; resolves the
     /// `beats=` form of [`TimeSpec`]. Defaults to 120.
     pub tempo: f32,
-    /// Top-level effects, run in series.
+    /// Port for the phone/tablet web remote, from the top-level `remote`
+    /// node; `None` leaves the remote off.
+    pub remote_port: Option<u16>,
+    /// The scenes, in file order; always at least one. Bare top-level
+    /// effects lower to a single scene named "main".
+    pub scenes: Vec<SceneSpec>,
+}
+
+/// One named scene: a chain of effects, and what happens to sounding
+/// notes when the scene is switched away from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneSpec {
+    /// The scene's name, unique within the config, compared as written
+    /// (case matters). Bare configs get a single scene named "main".
+    pub name: String,
+    /// Cut sounding notes when leaving the scene (`switch="kill"`) rather
+    /// than letting them ring out (`switch="let-ring"`, the default).
+    pub kill_on_exit: bool,
+    /// The scene's effects, run in series. An empty chain passes events
+    /// through.
     pub chain: Vec<EffectSpec>,
 }
 

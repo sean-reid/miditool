@@ -3,10 +3,13 @@
 //! human 1-16 to the wire 0-15.
 
 use crate::ast;
-use crate::{Config, ConfigError, EffectSpec, OutputSpec, ShuffleMode, TimeSpec};
+use crate::{Config, ConfigError, EffectSpec, OutputSpec, SceneSpec, ShuffleMode, TimeSpec};
 
 /// Output port name used when the config has no `output` node.
 const DEFAULT_OUTPUT: &str = "miditool Out";
+
+/// Scene name given to the implicit chain of a bare-style config.
+const MAIN_SCENE: &str = "main";
 
 /// Tempo used when the config has no `tempo` node.
 const DEFAULT_TEMPO: f32 = 120.0;
@@ -41,7 +44,90 @@ pub(crate) fn document(doc: ast::Document) -> Result<Config, ConfigError> {
         hide_input: doc.input.as_ref().and_then(|i| i.hide).unwrap_or(false),
         output,
         tempo: tempo(doc.tempo)?,
-        chain: effects(doc.effects)?,
+        remote_port: remote(doc.remote)?,
+        scenes: scenes(doc.scenes, doc.effects)?,
+    })
+}
+
+fn remote(node: Option<ast::Remote>) -> Result<Option<u16>, ConfigError> {
+    let Some(ast::Remote { port }) = node else {
+        return Ok(None);
+    };
+    if (1..=65535).contains(&port) {
+        Ok(Some(port as u16))
+    } else {
+        Err(ConfigError::invalid(
+            "remote",
+            format!("port must be within 1..=65535, got {port}"),
+        ))
+    }
+}
+
+fn scenes(
+    scene_nodes: Vec<ast::Scene>,
+    loose: Vec<ast::Effect>,
+) -> Result<Vec<SceneSpec>, ConfigError> {
+    if scene_nodes.is_empty() {
+        // The bare style: the whole document is one implicit chain. This
+        // covers the empty document too; an empty chain passes events
+        // through, so a pure pass-through config stays valid.
+        return Ok(vec![SceneSpec {
+            name: MAIN_SCENE.to_owned(),
+            kill_on_exit: false,
+            chain: effects(loose)?,
+        }]);
+    }
+    if !loose.is_empty() {
+        return Err(ConfigError::invalid(
+            "scene",
+            "bare effects and scene blocks do not mix; \
+             put the loose effects in a scene block",
+        ));
+    }
+    let mut scenes = Vec::with_capacity(scene_nodes.len());
+    for node in scene_nodes {
+        let scene = scene(node)?;
+        if scenes.iter().any(|s: &SceneSpec| s.name == scene.name) {
+            return Err(ConfigError::invalid(
+                "scene",
+                format!("duplicate scene name \"{}\"", scene.name),
+            ));
+        }
+        scenes.push(scene);
+    }
+    Ok(scenes)
+}
+
+fn scene(node: ast::Scene) -> Result<SceneSpec, ConfigError> {
+    if node.name.is_empty() {
+        return Err(ConfigError::invalid(
+            "scene",
+            "the scene name must not be empty",
+        ));
+    }
+    let kill_on_exit = match node.switch.as_deref() {
+        None | Some("let-ring") => false,
+        Some("kill") => true,
+        Some(other) => {
+            return Err(ConfigError::invalid(
+                "scene",
+                format!("switch must be \"kill\" or \"let-ring\", got \"{other}\""),
+            ));
+        }
+    };
+    if node.effects.is_empty() {
+        return Err(ConfigError::invalid(
+            "scene",
+            format!(
+                "scene \"{}\" is empty; give it at least one effect",
+                node.name
+            ),
+        ));
+    }
+    Ok(SceneSpec {
+        name: node.name,
+        kill_on_exit,
+        chain: effects(node.effects)?,
     })
 }
 

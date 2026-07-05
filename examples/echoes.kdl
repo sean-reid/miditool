@@ -1,5 +1,6 @@
-// Ambient echoes: every note trails off in fading repeats, and notes you
-// hold down get gently re-struck on a loose two-second pulse.
+// Ambient echoes, in two scenes: the everyday trail, and a denser storm
+// to switch into for a chorus. The remote node serves a phone-sized scene
+// switcher on port 8320.
 //
 // Times are written either as durations ("300ms", "1.5s") or as beats
 // against the tempo below.
@@ -8,6 +9,18 @@ input "Roland"
 output virtual="miditool Echoes"
 
 tempo 96                             // beats= times below follow this
+remote port=8320                     // switch scenes from a browser
 
-echo repeats=4 beats=0.5 decay=0.7   // fading repeats every half beat
-restrike seed=9 interval="2s" jitter=0.2
+// Every note trails off in fading repeats, and notes you hold down get
+// gently re-struck on a loose two-second pulse.
+scene "echoes" {
+    echo repeats=4 beats=0.5 decay=0.7   // fading repeats every half beat
+    restrike seed=9 interval="2s" jitter=0.2
+}
+
+// A thicker cloud; switch="kill" cuts the ringing repeats on the way out
+// instead of letting them fade (the "let-ring" default).
+scene "echo storm" switch="kill" {
+    echo repeats=6 time="300ms" decay=0.8
+    restrike seed=9 interval="1.5s" jitter=0.3 decay=0.6
+}

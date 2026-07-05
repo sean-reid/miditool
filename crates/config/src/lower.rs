@@ -223,7 +223,7 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             sigma,
         } => match sigma {
             // sigma wins over lo/hi when both are given.
-            Some(sigma) => {
+            Some(ast::Number(sigma)) => {
                 if !(sigma.is_finite() && sigma > 0.0) {
                     return Err(ConfigError::invalid(
                         "loose-keys",
@@ -245,7 +245,7 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             floor,
             ceiling,
         } => {
-            let gamma = gamma.unwrap_or(1.0);
+            let gamma = gamma.map_or(1.0, |ast::Number(v)| v);
             if !(gamma.is_finite() && gamma > 0.0) {
                 return Err(ConfigError::invalid(
                     "velocity-curve",
@@ -312,7 +312,11 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             EffectSpec::Echo {
                 repeats: bounded("echo", "repeats", repeats.unwrap_or(3), 1, 16)?,
                 time,
-                decay: decay_factor("echo", decay.unwrap_or(0.6), OneIs::Allowed)?,
+                decay: decay_factor(
+                    "echo",
+                    decay.map_or(0.6, |ast::Number(v)| v),
+                    OneIs::Allowed,
+                )?,
                 transpose: transpose as i16,
             }
         }
@@ -326,7 +330,7 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             max,
         } => {
             let interval = time_spec("restrike", "interval", interval, beats)?;
-            let jitter = jitter.unwrap_or(0.15);
+            let jitter = jitter.map_or(0.15, |ast::Number(v)| v);
             if !(jitter.is_finite() && (0.0..=0.9).contains(&jitter)) {
                 return Err(ConfigError::invalid(
                     "restrike",
@@ -337,7 +341,11 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
                 seed,
                 interval,
                 jitter: jitter as f32,
-                decay: decay_factor("restrike", decay.unwrap_or(0.7), OneIs::Excluded)?,
+                decay: decay_factor(
+                    "restrike",
+                    decay.map_or(0.7, |ast::Number(v)| v),
+                    OneIs::Excluded,
+                )?,
                 floor: velocity("restrike", "floor", floor.unwrap_or(8))?,
                 max: bounded("restrike", "max", max.unwrap_or(12), 1, 24)?,
             }
@@ -349,7 +357,7 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             curve,
         } => {
             let first = time_spec("stutter", "first", first, beats)?;
-            let curve = curve.unwrap_or(1.0);
+            let curve = curve.map_or(1.0, |ast::Number(v)| v);
             if !(curve.is_finite() && (0.25..=4.0).contains(&curve)) {
                 return Err(ConfigError::invalid(
                     "stutter",
@@ -372,7 +380,11 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             seed,
         } => EffectSpec::WedgeMirror {
             axis: key("wedge-mirror", "axis", axis.unwrap_or(60))?,
-            probability: fraction("wedge-mirror", "probability", probability.unwrap_or(1.0))?,
+            probability: fraction(
+                "wedge-mirror",
+                "probability",
+                probability.map_or(1.0, |ast::Number(v)| v),
+            )?,
             seed: seed.unwrap_or(0),
         },
         E::BlockedKeys { keys, by_class } => {
@@ -495,7 +507,11 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             }
         }
         E::AggregateGate { leak, seed } => EffectSpec::AggregateGate {
-            leak: fraction("aggregate-gate", "leak", leak.unwrap_or(0.0))?,
+            leak: fraction(
+                "aggregate-gate",
+                "leak",
+                leak.map_or(0.0, |ast::Number(v)| v),
+            )?,
             seed: seed.unwrap_or(0),
         },
         E::Sieve { expr, snap } => {
@@ -528,11 +544,17 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
                 50.0,
             )?,
             duration: time_spec_or("poisson-cloud", "duration", duration, beats, 2000.0)?,
-            sigma: float_range("poisson-cloud", "sigma", sigma.unwrap_or(7.0), 0.0, 24.0)?,
+            sigma: float_range(
+                "poisson-cloud",
+                "sigma",
+                sigma.map_or(7.0, |ast::Number(v)| v),
+                0.0,
+                24.0,
+            )?,
             vel_sigma: float_range(
                 "poisson-cloud",
                 "vel-sigma",
-                vel_sigma.unwrap_or(10.0),
+                vel_sigma.map_or(10.0, |ast::Number(v)| v),
                 0.0,
                 40.0,
             )?,
@@ -545,8 +567,16 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             lo,
             hi,
         } => {
-            let pass = fraction("note-roulette", "pass", pass.unwrap_or(0.6))?;
-            let replace = fraction("note-roulette", "replace", replace.unwrap_or(0.3))?;
+            let pass = fraction(
+                "note-roulette",
+                "pass",
+                pass.map_or(0.6, |ast::Number(v)| v),
+            )?;
+            let replace = fraction(
+                "note-roulette",
+                "replace",
+                replace.map_or(0.3, |ast::Number(v)| v),
+            )?;
             if pass + replace > 1.0 {
                 return Err(ConfigError::invalid(
                     "note-roulette",
@@ -573,7 +603,7 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             sigma,
         } => match sigma {
             // sigma wins over lo/hi when both are given, like loose-keys.
-            Some(sigma) => EffectSpec::VelocityDiceGaussian {
+            Some(ast::Number(sigma)) => EffectSpec::VelocityDiceGaussian {
                 seed,
                 sigma: float_range("velocity-dice", "sigma", sigma, 0.1, 40.0)?,
             },
@@ -654,7 +684,11 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             kind: cluster_kind(kind, sieve)?,
             width: bounded("cluster-fist", "width", width.unwrap_or(4), 2, 12)?,
             anchor: cluster_anchor(anchor)?,
-            rolloff: fraction("cluster-fist", "rolloff", rolloff.unwrap_or(0.8))?,
+            rolloff: fraction(
+                "cluster-fist",
+                "rolloff",
+                rolloff.map_or(0.8, |ast::Number(v)| v),
+            )?,
         },
         E::ResonanceHalo {
             width,
@@ -671,7 +705,11 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             }
             EffectSpec::ResonanceHalo {
                 width: bounded("resonance-halo", "width", width.unwrap_or(3), 1, 6)?,
-                level: fraction("resonance-halo", "level", level.unwrap_or(0.25))?,
+                level: fraction(
+                    "resonance-halo",
+                    "level",
+                    level.map_or(0.25, |ast::Number(v)| v),
+                )?,
                 decay: time_spec_or("resonance-halo", "decay", decay, beats, 3000.0)?,
                 sieve,
             }

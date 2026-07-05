@@ -160,11 +160,11 @@ pub(crate) enum Effect {
         #[knus(property)]
         hi: Option<i64>,
         #[knus(property)]
-        sigma: Option<f64>,
+        sigma: Option<Number>,
     },
     VelocityCurve {
         #[knus(property)]
-        gamma: Option<f64>,
+        gamma: Option<Number>,
         #[knus(property)]
         floor: Option<i64>,
         #[knus(property)]
@@ -206,7 +206,7 @@ pub(crate) enum Effect {
         #[knus(property)]
         beats: Option<Number>,
         #[knus(property)]
-        decay: Option<f64>,
+        decay: Option<Number>,
         #[knus(property)]
         transpose: Option<i64>,
     },
@@ -218,9 +218,9 @@ pub(crate) enum Effect {
         #[knus(property)]
         beats: Option<Number>,
         #[knus(property)]
-        jitter: Option<f64>,
+        jitter: Option<Number>,
         #[knus(property)]
-        decay: Option<f64>,
+        decay: Option<Number>,
         #[knus(property)]
         floor: Option<i64>,
         #[knus(property)]
@@ -234,7 +234,7 @@ pub(crate) enum Effect {
         #[knus(property)]
         beats: Option<Number>,
         #[knus(property)]
-        curve: Option<f64>,
+        curve: Option<Number>,
     },
     RegistralScatter {
         #[knus(property)]
@@ -248,7 +248,7 @@ pub(crate) enum Effect {
         #[knus(property)]
         axis: Option<i64>,
         #[knus(property)]
-        probability: Option<f64>,
+        probability: Option<Number>,
         #[knus(property)]
         seed: Option<u64>,
     },
@@ -292,7 +292,7 @@ pub(crate) enum Effect {
     },
     AggregateGate {
         #[knus(property)]
-        leak: Option<f64>,
+        leak: Option<Number>,
         #[knus(property)]
         seed: Option<u64>,
     },
@@ -312,9 +312,9 @@ pub(crate) enum Effect {
         #[knus(property)]
         beats: Option<Number>,
         #[knus(property)]
-        sigma: Option<f64>,
+        sigma: Option<Number>,
         #[knus(property)]
-        vel_sigma: Option<f64>,
+        vel_sigma: Option<Number>,
         #[knus(property)]
         max: Option<i64>,
     },
@@ -322,9 +322,9 @@ pub(crate) enum Effect {
         #[knus(property)]
         seed: u64,
         #[knus(property)]
-        pass: Option<f64>,
+        pass: Option<Number>,
         #[knus(property)]
-        replace: Option<f64>,
+        replace: Option<Number>,
         #[knus(property)]
         lo: Option<i64>,
         #[knus(property)]
@@ -338,7 +338,7 @@ pub(crate) enum Effect {
         #[knus(property)]
         hi: Option<i64>,
         #[knus(property)]
-        sigma: Option<f64>,
+        sigma: Option<Number>,
     },
     DurationLottery {
         #[knus(property)]
@@ -372,7 +372,7 @@ pub(crate) enum Effect {
         #[knus(property)]
         anchor: Option<String>,
         #[knus(property)]
-        rolloff: Option<f64>,
+        rolloff: Option<Number>,
         #[knus(property)]
         sieve: Option<String>,
     },
@@ -380,7 +380,7 @@ pub(crate) enum Effect {
         #[knus(property)]
         width: Option<i64>,
         #[knus(property)]
-        level: Option<f64>,
+        level: Option<Number>,
         #[knus(property)]
         decay: Option<String>,
         #[knus(property)]

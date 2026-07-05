@@ -2046,3 +2046,13 @@ fn to_nanos_resolves_beats_against_the_tempo() {
     // nearest nanosecond.
     assert_eq!(TimeSpec::Beats(0.5).to_nanos(90.0), 333_333_333);
 }
+
+#[test]
+fn float_properties_accept_integer_literals() {
+    // Every float-valued property takes a bare integer as well as a
+    // decimal, so nobody has to know which spelling a node wants.
+    let cfg = parse(
+        "loose-keys seed=1 sigma=7\nvelocity-curve gamma=2\necho repeats=2 time=\"100ms\" decay=1\nwedge-mirror probability=1\nvelocity-dice seed=1 sigma=15\nresonance-halo level=1 decay=\"1s\"",
+    );
+    assert_eq!(cfg.scenes[0].chain.len(), 6);
+}

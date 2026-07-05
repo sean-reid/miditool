@@ -1,0 +1,42 @@
+---
+title: miditool
+description: A MIDI mixing layer between your keyboard and your DAW. Scrambled keys, stochastic effects, deterministic seeds, and a phone remote, all from one small config file.
+template: splash
+hero:
+  title: miditool
+  tagline: A MIDI mixing layer between your keyboard and your DAW.
+  actions:
+    - text: Get started
+      link: /miditool/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/sean-reid/miditool
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+miditool reads what you play, transforms it in real time, and hands your DAW a single altered stream. A config is a few lines of KDL; the rest is playing.
+
+<CardGrid>
+  <Card title="Scrambled and stochastic effects" icon="random">
+    Permute the keyboard with `shuffle-lock`, draw fresh notes on every press with `loose-keys`, ratchet with `stutter`, trail with `echo`. Effects compose into chains and forks, so a split keyboard with different treatments per hand is a few lines of config.
+  </Card>
+  <Card title="Deterministic seeds" icon="approve-check">
+    Every random effect takes a seed, and the same seed gives the same behavior forever. A scrambled keyboard is stable enough to practice and learn. Reroll by changing one number.
+  </Card>
+  <Card title="A sub-millisecond engine" icon="rocket">
+    The processing path is allocation-free and adds no audible latency. Note-off correctness is guaranteed even when a mapping changes while a note is held. Measure it yourself with `miditool bench`.
+  </Card>
+  <Card title="A phone remote" icon="phone">
+    Add `remote port=8320` to the config and switch scenes from a phone or tablet on your music stand, with a live event monitor and a panic button.
+  </Card>
+</CardGrid>
+
+## Where to go next
+
+- [Getting started](/miditool/getting-started/): install, find your keyboard, run your first config.
+- [How it works](/miditool/how-it-works/): the path an event takes, and why edits never interrupt playing.
+- [Using miditool with GarageBand](/miditool/guides/garageband/): the one setup step GarageBand needs.
+- [The effects](/miditool/effects/shuffle-lock/): one page per effect, every parameter documented.

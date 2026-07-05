@@ -3,7 +3,8 @@
   "private": true,
   "description": "Playwright suite for the miditool web remote",
   "scripts": {
-    "test": "playwright test"
+    "test": "playwright test",
+    "screenshots": "node capture.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.53.0",

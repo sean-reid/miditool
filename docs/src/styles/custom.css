@@ -1,0 +1,97 @@
+/* The docs share the web remote's instrument-panel look: warm paper and
+   ink, square corners, hairline rules, uppercase silkscreened labels.
+   Color is reserved for function. Palette from crates/remote/ui/style.css:
+   paper #e9e6df, card #f7f5f1, ink #171512, muted #6e685c, hairline
+   #b9b3a6, red #c0331b, green #2f7d33, amber #a36a00. */
+
+/* Light theme: the primary face of the site. */
+:root[data-theme="light"] {
+  --sl-color-white: #171512; /* ink: headings, strong text */
+  --sl-color-gray-1: #26231e;
+  --sl-color-gray-2: #3d382f;
+  --sl-color-gray-3: #6e685c; /* muted */
+  --sl-color-gray-4: #8d8778;
+  --sl-color-gray-5: #b9b3a6; /* hairline: borders */
+  --sl-color-gray-6: #e9e6df; /* paper: raised surfaces, inline code */
+  --sl-color-gray-7: #f0ede7;
+  --sl-color-black: #f7f5f1; /* card: the page itself */
+
+  /* Accent stays in the ink family; green is functional, not brand. */
+  --sl-color-accent-low: #ddd8cc;
+  --sl-color-accent: #3d382f;
+  --sl-color-accent-high: #171512;
+}
+
+/* Dark theme: the remote's flat warm night variant, not a navy app. */
+:root {
+  --sl-color-white: #e9e6df;
+  --sl-color-gray-1: #ddd9cf;
+  --sl-color-gray-2: #c4bfb1;
+  --sl-color-gray-3: #97917f;
+  --sl-color-gray-4: #6b6557;
+  --sl-color-gray-5: #46423a;
+  --sl-color-gray-6: #292723; /* card */
+  --sl-color-black: #201e1a; /* paper */
+
+  --sl-color-accent-low: #33302a;
+  --sl-color-accent: #97917f;
+  --sl-color-accent-high: #ddd9cf;
+}
+
+/* Type: a plain grotesk, like the panel's silkscreen. */
+:root {
+  --sl-font: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --sl-font-mono: "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+/* Square corners and hairline borders; no glows, no gradients. */
+.card,
+.starlight-aside,
+.sl-link-button,
+.sl-badge,
+button[data-open-modal],
+dialog[aria-label="Search"],
+.pagination-links > a,
+.sl-markdown-content code,
+.sl-markdown-content img {
+  border-radius: 0;
+}
+
+/* Ink-colored links stay findable: underline them in prose. */
+.sl-markdown-content a:not(.sl-link-button) {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+/* Sidebar group labels as small silkscreened captions. */
+#starlight__sidebar summary .group-label .large {
+  font-size: var(--sl-text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--sl-color-gray-3);
+}
+
+/* Cards read as panel modules: hairline border, flat face, and no
+   decorative hue cycling on the icons. The !important flags beat the
+   scoped nth-child hue rules inside Starlight's Card component. */
+.card {
+  border: 1px solid var(--sl-color-gray-5);
+  background: var(--sl-color-gray-7, var(--sl-color-gray-6));
+}
+
+.card .icon {
+  border: 1px solid var(--sl-color-gray-5) !important;
+  background-color: transparent !important;
+  color: var(--sl-color-white);
+  border-radius: 0;
+}
+
+.card .title {
+  font-size: var(--sl-text-lg);
+}
+
+/* Screenshots sit on the page like mounted plates. */
+.sl-markdown-content img {
+  border: 1px solid var(--sl-color-gray-5);
+}

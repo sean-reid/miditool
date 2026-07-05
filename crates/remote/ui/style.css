@@ -1,0 +1,255 @@
+/* The remote is styled like an instrument panel, not an app: paper and
+   ink, square corners, hairline rules, silkscreened labels. Color is
+   reserved for function: the red kill switch, the green signal lamp,
+   amber for warnings. Mobile first at 375px, one centered column on
+   anything wider; a flat warm night variant for dark rooms. */
+
+:root {
+  --paper: #e9e6df;
+  --card: #f7f5f1;
+  --ink: #171512;
+  --muted: #6e685c;
+  --hairline: #b9b3a6;
+  --red: #c0331b;
+  --green: #2f7d33;
+  --amber: #a36a00;
+  --mono: "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #201e1a;
+    --card: #292723;
+    --ink: #e9e6df;
+    --muted: #97917f;
+    --hairline: #46423a;
+    --red: #d64a30;
+    --green: #4d9e51;
+    --amber: #c98f2d;
+  }
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  min-height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  padding-bottom: calc(76px + env(safe-area-inset-bottom));
+}
+
+/* Header: a nameplate with a signal lamp. */
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  padding-top: calc(14px + env(safe-area-inset-top));
+  border-bottom: 1px solid var(--ink);
+}
+
+.wordmark {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  margin-right: auto;
+}
+
+.dropped {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+}
+
+.conn-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--red);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--ink);
+  background: var(--red);
+  flex: none;
+}
+
+.dot[data-state="open"] {
+  background: var(--green);
+}
+
+/* Layout column. */
+
+.column {
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 20px 16px 0;
+}
+
+/* Scenes: hardware keys in a bank. The active one is pressed (inverted). */
+
+.scenes {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ink);
+  background: var(--card);
+}
+
+.scene {
+  appearance: none;
+  border: none;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 17px;
+  font-weight: 500;
+  text-align: left;
+  padding: 0 16px;
+  min-height: 58px;
+  cursor: pointer;
+}
+
+.scene:last-child {
+  border-bottom: none;
+}
+
+.scene.active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.scene.optimistic {
+  background: var(--hairline);
+}
+
+.scene:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: -4px;
+}
+
+/* Monitor: a printed tape. */
+
+.monitor-panel {
+  margin-top: 24px;
+}
+
+.panel-title {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.monitor {
+  list-style: none;
+  border: 1px solid var(--ink);
+  background: var(--card);
+  font-family: var(--mono);
+  font-size: 12px;
+  min-height: 280px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.row .t {
+  color: var(--muted);
+  min-width: 5ch;
+  text-align: right;
+}
+
+.row .ch {
+  color: var(--muted);
+}
+
+.row .kind {
+  min-width: 8ch;
+}
+
+.row.kind-note-on .kind,
+.row.kind-note-on .detail {
+  font-weight: 700;
+}
+
+.row.kind-note-off .kind,
+.row.kind-note-off .detail {
+  color: var(--muted);
+}
+
+.row.kind-panic .kind,
+.row.kind-panic .detail {
+  color: var(--red);
+  font-weight: 700;
+}
+
+/* Panic: the kill switch. */
+
+.panic-bar {
+  position: fixed;
+  inset: auto 0 0 0;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  background: var(--paper);
+  border-top: 1px solid var(--ink);
+}
+
+.panic {
+  appearance: none;
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  min-height: 52px;
+  background: var(--red);
+  color: #fff;
+  border: 1px solid var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  cursor: pointer;
+}
+
+.panic.flash,
+.panic:active {
+  background: var(--ink);
+}
+
+/* Disconnected: the panel dims and says so. */
+
+body.disconnected .column {
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .scene,
+  .panic {
+    transition: background-color 80ms linear, color 80ms linear;
+  }
+}

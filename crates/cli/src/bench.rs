@@ -50,7 +50,10 @@ pub fn bench(rounds: u32) -> anyhow::Result<()> {
     )
     .context("failed to start the pass-through engine")?;
 
-    let arrivals: Arc<Mutex<Vec<Instant>>> = Arc::new(Mutex::new(Vec::new()));
+    // Preallocated: the callback runs on the measured path, and a mid-run
+    // regrow would show up as a latency spike.
+    let arrivals: Arc<Mutex<Vec<Instant>>> =
+        Arc::new(Mutex::new(Vec::with_capacity(rounds as usize * 2)));
     let recorder = Arc::clone(&arrivals);
     let capture = miditool_io::open_input(Some(SINK), move |_stamp, bytes| {
         let now = Instant::now();
@@ -67,7 +70,10 @@ pub fn bench(rounds: u32) -> anyhow::Result<()> {
     .context("failed to open the capture input on the engine's output")?;
 
     thread::sleep(SETTLE);
-    eprintln!("bench: {rounds} note pairs, {SOURCE} -> engine -> {SINK}");
+    eprintln!(
+        "bench: {rounds} note pairs ({} events), {SOURCE} -> engine -> {SINK}",
+        rounds * 2
+    );
 
     let mut sends = Vec::with_capacity(rounds as usize * 2);
     let start = Instant::now();
@@ -95,7 +101,7 @@ pub fn bench(rounds: u32) -> anyhow::Result<()> {
 fn report(sends: &[Instant], arrivals: &[Instant]) -> anyhow::Result<()> {
     if arrivals.is_empty() {
         anyhow::bail!(
-            "sent {} messages but received none; something else may have \
+            "sent {} events but received none; something else may have \
              claimed the {SINK} port",
             sends.len()
         );
@@ -111,11 +117,16 @@ fn report(sends: &[Instant], arrivals: &[Instant]) -> anyhow::Result<()> {
         .map(|(arrived, sent)| arrived.duration_since(*sent).as_secs_f64() * 1e6)
         .collect();
     lat_us.sort_by(|a, b| a.total_cmp(b));
-    let pct = |p: f64| lat_us[((lat_us.len() - 1) as f64 * p / 100.0).round() as usize];
+    let pct = |p: f64| {
+        let idx = ((lat_us.len() - 1) as f64 * p / 100.0).round() as usize;
+        lat_us[idx.min(lat_us.len() - 1)]
+    };
 
+    // The table counts events (one per message), matching the summary
+    // line's "(N events)": two per note pair.
     println!(
         "{:>7} {:>11} {:>11} {:>11} {:>11} {:>11} {:>6}",
-        "count", "min", "p50", "p90", "p99", "max", "lost"
+        "events", "min", "p50", "p90", "p99", "max", "lost"
     );
     println!(
         "{:>7} {:>11} {:>11} {:>11} {:>11} {:>11} {:>6}",

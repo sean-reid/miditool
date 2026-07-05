@@ -4,15 +4,21 @@
    amber for warnings. Mobile first at 375px, one centered column on
    anything wider; a flat warm night variant for dark rooms. */
 
+/* --red is red type on paper or card; --red-fill is the red field under
+   the panic button's white label. One value serves both in daylight, but
+   in the dark they pull apart: type must lighten and the field must
+   deepen for either to hold 4.5:1. */
+
 :root {
   --paper: #e9e6df;
   --card: #f7f5f1;
   --ink: #171512;
-  --muted: #6e685c;
+  --muted: #655f52;
   --hairline: #b9b3a6;
   --red: #c0331b;
+  --red-fill: #c0331b;
   --green: #2f7d33;
-  --amber: #a36a00;
+  --amber: #855600;
   --mono: "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
@@ -24,7 +30,8 @@
     --ink: #e9e6df;
     --muted: #97917f;
     --hairline: #46423a;
-    --red: #d64a30;
+    --red: #ec6d52;
+    --red-fill: #b8351f;
     --green: #4d9e51;
     --amber: #c98f2d;
   }
@@ -81,17 +88,32 @@ body {
   color: var(--red);
 }
 
+/* The lamp differs by shape as well as hue: lit and filled when
+   connected, hollow when the line is down. */
+
 .dot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  border: 1px solid var(--ink);
-  background: var(--red);
+  border: 1px solid var(--red);
+  background: transparent;
   flex: none;
 }
 
 .dot[data-state="open"] {
+  border-color: var(--ink);
   background: var(--green);
+}
+
+/* Present to screen readers, invisible on the panel. */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* Layout column. */
@@ -137,11 +159,16 @@ body {
 
 .scene.optimistic {
   background: var(--hairline);
+  color: var(--ink);
 }
 
 .scene:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: -4px;
+}
+
+.scene:disabled {
+  cursor: default;
 }
 
 /* Monitor: a printed tape. */
@@ -157,6 +184,11 @@ body {
   letter-spacing: 0.14em;
   color: var(--muted);
   margin-bottom: 6px;
+}
+
+.monitor:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
 .monitor {
@@ -225,7 +257,7 @@ body {
   max-width: 560px;
   margin: 0 auto;
   min-height: 52px;
-  background: var(--red);
+  background: var(--red-fill);
   color: #fff;
   border: 1px solid var(--ink);
   font-family: var(--sans);
@@ -236,9 +268,18 @@ body {
   cursor: pointer;
 }
 
-.panic.flash,
 .panic:active {
   background: var(--ink);
+}
+
+.panic:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.panic:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* Disconnected: the panel dims and says so. */
@@ -247,9 +288,26 @@ body.disconnected .column {
   opacity: 0.45;
 }
 
+/* One ink flash acknowledges the press, then the switch is red again.
+   With reduced motion the :active state above is the whole show. */
+
+@keyframes panic-flash {
+  from {
+    background: var(--ink);
+  }
+
+  to {
+    background: var(--red-fill);
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .scene,
   .panic {
     transition: background-color 80ms linear, color 80ms linear;
+  }
+
+  .panic.flash {
+    animation: panic-flash 200ms linear;
   }
 }

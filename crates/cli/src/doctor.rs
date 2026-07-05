@@ -15,14 +15,16 @@ struct Checkup {
 }
 
 impl Checkup {
-    fn ok(&mut self, message: impl Display) {
+    fn ok(&self, message: impl Display) {
         println!("ok    {message}");
     }
 
-    fn warn(&mut self, message: impl Display) {
+    fn warn(&self, message: impl Display) {
         println!("warn  {message}");
     }
 
+    /// The only verdict that needs `&mut`: it records the failure for
+    /// the exit status.
     fn fail(&mut self, message: impl Display) {
         self.failed = true;
         println!("fail  {message}");
@@ -36,13 +38,13 @@ pub fn doctor(config: Option<PathBuf>) -> anyhow::Result<()> {
     check_config(&mut checkup, config);
     #[cfg(target_os = "macos")]
     {
-        check_hidden_sources(&mut checkup);
-        check_daws(&mut checkup);
+        check_hidden_sources(&checkup);
+        check_daws(&checkup);
     }
     #[cfg(target_os = "linux")]
-    check_sequencer(&mut checkup);
+    check_sequencer(&checkup);
     #[cfg(target_os = "windows")]
-    check_loopmidi(&mut checkup);
+    check_loopmidi(&checkup);
 
     if checkup.failed {
         anyhow::bail!("some checks failed");
@@ -53,7 +55,7 @@ pub fn doctor(config: Option<PathBuf>) -> anyhow::Result<()> {
 /// Windows has no native virtual ports; without loopMIDI there is nowhere
 /// for miditool to send.
 #[cfg(target_os = "windows")]
-fn check_loopmidi(checkup: &mut Checkup) {
+fn check_loopmidi(checkup: &Checkup) {
     match miditool_io::output_ports() {
         Ok(outputs) if outputs.iter().any(|o| o.to_lowercase().contains("loopmidi")) => {
             checkup.ok("loopMIDI port found for virtual output")
@@ -105,11 +107,13 @@ fn check_config(checkup: &mut Checkup, config: Option<PathBuf>) {
 /// Sources present in the CoreMIDI device tree but missing from flat
 /// enumeration: hidden by a crashed run, or merely offline.
 #[cfg(target_os = "macos")]
-fn check_hidden_sources(checkup: &mut Checkup) {
+fn check_hidden_sources(checkup: &Checkup) {
     match miditool_io::hide::hidden_sources() {
         Ok(hidden) if hidden.is_empty() => checkup.ok("no MIDI sources look hidden"),
         Ok(hidden) => checkup.warn(format!(
-            "possibly hidden (or offline): {}; run `miditool unhide` to be sure",
+            "possibly hidden or simply offline: {}; `miditool unhide` clears the \
+             hidden case; a source still listed here after that is offline or \
+             unplugged",
             hidden.join(", ")
         )),
         Err(e) => checkup.warn(format!("could not scan for hidden sources: {e}")),
@@ -119,7 +123,7 @@ fn check_hidden_sources(checkup: &mut Checkup) {
 /// DAWs that grab every port only rescan at launch, so one that started
 /// before miditool keeps hearing the raw keyboard.
 #[cfg(target_os = "macos")]
-fn check_daws(checkup: &mut Checkup) {
+fn check_daws(checkup: &Checkup) {
     for app in ["GarageBand", "Logic Pro"] {
         match process_running(app) {
             Some(true) => checkup.warn(format!(
@@ -144,7 +148,7 @@ fn process_running(name: &str) -> Option<bool> {
 
 /// The ALSA sequencer device exists.
 #[cfg(target_os = "linux")]
-fn check_sequencer(checkup: &mut Checkup) {
+fn check_sequencer(checkup: &Checkup) {
     if std::path::Path::new("/dev/snd/seq").exists() {
         checkup.ok("/dev/snd/seq exists");
     } else {

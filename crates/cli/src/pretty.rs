@@ -10,7 +10,7 @@ const NOTE_NAMES: [&str; 12] = [
 
 /// MIDI key number as scientific pitch, middle C (60) = C4.
 pub fn note_name(key: u8) -> String {
-    let octave = (key / 12) as i8 - 1;
+    let octave = i32::from(key) / 12 - 1;
     format!("{}{}", NOTE_NAMES[(key % 12) as usize], octave)
 }
 
@@ -117,22 +117,23 @@ routing
   chain { ... }            effects in series
   fork { ... }             effects in parallel, outputs merged
   only-channels 1 2 ...    keep events on these channels
-  key-range lo=21 hi=108   keep notes in a key range (controllers pass)
+  key-range lo=.. hi=..    keep notes in a range, defaults 0..127
   velocity-range lo=1 hi=127
   notes-only / controllers-only
 
 config file shape
-  input \"Roland\"                   optional; substring of the input port
+  input \"Roland\" hide=true        optional; substring, hide=true hides it
   output virtual=\"miditool Out\"    default; or output device=\"IAC\"
   tempo 120                          default; beats per minute for beats=
-  remote port=8320                   optional; phone/tablet web remote
+  remote port=8320 bind=\"0.0.0.0\"  optional; phone/tablet web remote
   ...effects...                      top level is an implicit chain
   scene \"name\" { ...effects... }    or: one or more named scenes
 
 Scenes replace the bare chain; the two styles don't mix. Each scene is
 its own chain, and switch=\"kill\" cuts sounding notes when you leave it
 (the default, switch=\"let-ring\", lets them ring out). The remote serves
-a scene switcher to browsers on the given port.
+a scene switcher to browsers on the given port; without bind= it stays
+on this machine, and bind=\"0.0.0.0\" opens it to the local network.
 
 Time properties (time=, interval=, first=) take \"250ms\" or \"1.5s\", or
 beats=0.5 against the tempo. Randomness is deterministic: the same seed

@@ -44,7 +44,10 @@ impl Backend for EngineBackend {
     }
 
     fn drain_events(&self) -> Vec<MonitorEvent> {
-        let mut guard = self.tap.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self
+            .tap
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(tap) = guard.as_mut() else {
             return Vec::new();
         };
@@ -56,6 +59,23 @@ impl Backend for EngineBackend {
             }
         }
         out
+    }
+
+    /// The no-clients path: keep the tap ring from filling, but skip the
+    /// per-event formatting that `drain_events` pays for.
+    fn discard_events(&self) {
+        let mut guard = self
+            .tap
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(tap) = guard.as_mut() else {
+            return;
+        };
+        for _ in 0..DRAIN_MAX {
+            if tap.pop().is_err() {
+                break;
+            }
+        }
     }
 }
 
@@ -140,7 +160,8 @@ mod tests {
         .expect("start engine");
 
         let backend = EngineBackend::new(handle.clone(), handle.take_tap());
-        let server = miditool_remote::Server::start(0, Arc::new(backend)).expect("start server");
+        let addr = (std::net::Ipv4Addr::LOCALHOST, 0).into();
+        let server = miditool_remote::Server::start(addr, Arc::new(backend)).expect("start server");
 
         // The server answers over real HTTP.
         let mut sock = std::net::TcpStream::connect(server.addr()).expect("connect");
@@ -164,7 +185,6 @@ mod tests {
             sink.lock().unwrap().push(bytes.to_vec());
         })
         .expect("open capture");
-        std::thread::sleep(Duration::from_millis(300));
 
         let wait_for = |pred: &mut dyn FnMut() -> bool| {
             let deadline = Instant::now() + Duration::from_secs(5);
@@ -176,6 +196,31 @@ mod tests {
             }
             false
         };
+
+        // CoreMIDI wires virtual ports up asynchronously: probe with a
+        // throwaway note (re-sent every 200ms, up to 5s) until the capture
+        // hears it, then start the real assertions from a clean buffer.
+        {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            'probe: loop {
+                keyboard.send(&[0x90, 0, 1]).expect("send probe note-on");
+                keyboard.send(&[0x80, 0, 0]).expect("send probe note-off");
+                let retry = Instant::now() + Duration::from_millis(200);
+                while Instant::now() < retry {
+                    if !received.lock().unwrap().is_empty() {
+                        break 'probe;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "the loopback never became live: no probe note arrived in 5s"
+                );
+            }
+            // Let the probe's partner message land before wiping.
+            std::thread::sleep(Duration::from_millis(250));
+            received.lock().unwrap().clear();
+        }
 
         // Scene 0 passes through untransposed.
         keyboard.send(&[0x90, 60, 100]).unwrap();

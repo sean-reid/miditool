@@ -11,13 +11,40 @@ use std::time::{Duration, Instant};
 use miditool_core::graph::Node;
 use miditool_effects::Transpose;
 use miditool_engine::{Engine, SceneDef};
-use miditool_io::{OutputTarget, open_input, open_output};
+use miditool_io::{Output, OutputTarget, open_input, open_output};
 
 fn one_scene() -> Vec<SceneDef> {
     vec![SceneDef {
         name: "test".to_owned(),
         kill_on_exit: false,
     }]
+}
+
+/// Block until the keyboard-to-capture path is live. CoreMIDI wires
+/// virtual ports up asynchronously, so a probe note is sent (and re-sent
+/// every 200ms, up to 5s) until `seen` reports an arrival; a fixed sleep
+/// would be either flaky or slow. Callers clear their capture buffer
+/// afterwards so the probe does not pollute the real assertions.
+fn wait_until_live(keyboard: &mut Output, seen: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        keyboard.send(&[0x90, 0, 1]).expect("send probe note-on");
+        keyboard.send(&[0x80, 0, 0]).expect("send probe note-off");
+        let retry = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < retry {
+            if seen() {
+                // Give the probe's partner message a moment to land so
+                // the caller's clear wipes both.
+                sleep(Duration::from_millis(250));
+                return;
+            }
+            sleep(Duration::from_millis(10));
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the loopback never became live: no probe note arrived in 5s"
+        );
+    }
 }
 
 /// Wait until `pred` is true or a timeout expires. Virtual port plumbing is
@@ -57,8 +84,9 @@ fn transposes_notes_end_to_end() {
     })
     .expect("open capture port");
 
-    // Give CoreMIDI a moment to finish the connections, then play.
-    sleep(Duration::from_millis(300));
+    // Wait for CoreMIDI to finish the connections, then play.
+    wait_until_live(&mut keyboard, || !received.lock().unwrap().is_empty());
+    received.lock().unwrap().clear();
     keyboard.send(&[0x90, 60, 100]).unwrap();
     keyboard.send(&[0x80, 60, 0]).unwrap();
 
@@ -121,7 +149,8 @@ fn echoes_arrive_on_schedule() {
     })
     .expect("open capture port");
 
-    sleep(Duration::from_millis(300));
+    wait_until_live(&mut keyboard, || !received.lock().unwrap().is_empty());
+    received.lock().unwrap().clear();
     keyboard.send(&[0x90, 60, 100]).unwrap();
     keyboard.send(&[0x80, 60, 0]).unwrap();
 

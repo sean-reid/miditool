@@ -21,6 +21,7 @@
 
   let ws = null;
   let backoff = BACKOFF_START_MS;
+  let connected = false;
   let scenes = [];
   let activeIdx = -1; // last server-confirmed active scene
   let optimisticIdx = -1; // shown from tap until the next status push
@@ -49,9 +50,21 @@
   }
 
   function setConnected(open) {
+    connected = open;
+    const state = open ? "connected" : "reconnecting";
     dot.dataset.state = open ? "open" : "closed";
+    dot.setAttribute("aria-label", state);
+    dot.firstElementChild.textContent = state;
     connLabel.hidden = open;
     document.body.classList.toggle("disconnected", !open);
+    // A dead line means dead controls: nothing to press, nothing
+    // optimistic. The next status frame after reconnect resyncs.
+    if (!open) optimisticIdx = -1;
+    panicBtn.disabled = !open;
+    [...scenesEl.children].forEach((btn, i) => {
+      btn.disabled = !open;
+      paintScene(btn, i);
+    });
   }
 
   function send(msg) {
@@ -78,6 +91,7 @@
         btn.type = "button";
         btn.className = "scene";
         btn.dataset.testid = "scene";
+        btn.disabled = !connected;
         btn.addEventListener("click", () => tapScene(idx));
         scenesEl.append(btn);
       }
@@ -90,6 +104,7 @@
     const shown = optimisticIdx >= 0 ? optimisticIdx : activeIdx;
     btn.classList.toggle("active", idx === shown);
     btn.classList.toggle("optimistic", idx === optimisticIdx && idx !== activeIdx);
+    btn.setAttribute("aria-pressed", idx === shown ? "true" : "false");
     // data-active reflects only what the server confirmed; tests and
     // debugging can tell it apart from the optimistic highlight.
     if (idx === activeIdx) btn.dataset.active = "1";
@@ -97,6 +112,7 @@
   }
 
   function tapScene(idx) {
+    if (!connected) return; // buttons are disabled; belt and braces
     optimisticIdx = idx;
     [...scenesEl.children].forEach((btn, i) => paintScene(btn, i));
     send({ type: "set_scene", idx });
@@ -114,9 +130,12 @@
   }
 
   function appendRows(events) {
-    // Events arrive oldest first; prepending in order leaves the
-    // newest at the top.
-    for (const ev of events) monitorEl.prepend(makeRow(ev));
+    // Events arrive oldest first, and only the newest MAX_ROWS can
+    // survive the trim, so build just those, newest first, and land
+    // them in one prepend.
+    const frag = document.createDocumentFragment();
+    for (const ev of events.slice(-MAX_ROWS)) frag.prepend(makeRow(ev));
+    monitorEl.prepend(frag);
     while (monitorEl.children.length > MAX_ROWS) monitorEl.lastChild.remove();
   }
 
@@ -147,10 +166,22 @@
   for (const type of ["pointerup", "pointercancel"]) {
     window.addEventListener(type, () => {
       if (!paused) return;
-      paused = false;
-      appendRows(held);
-      held = [];
+      resume();
     });
+  }
+
+  // Space is the keyboard's finger: press to hold, press to release.
+  monitorEl.addEventListener("keydown", (e) => {
+    if (e.key !== " ") return;
+    e.preventDefault();
+    if (paused) resume();
+    else paused = true;
+  });
+
+  function resume() {
+    paused = false;
+    appendRows(held);
+    held = [];
   }
 
   /* ---- panic ------------------------------------------------------- */
@@ -160,6 +191,9 @@
     panicBtn.classList.remove("flash");
     void panicBtn.offsetWidth; // restart the animation
     panicBtn.classList.add("flash");
+  });
+  panicBtn.addEventListener("animationend", () => {
+    panicBtn.classList.remove("flash");
   });
 
   connect();

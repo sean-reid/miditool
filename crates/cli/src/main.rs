@@ -99,7 +99,12 @@ fn hide(name: String) -> anyhow::Result<()> {
 fn unhide(name: Option<String>) -> anyhow::Result<()> {
     let touched = miditool_io::hide::unhide_sources(name.as_deref())?;
     if touched.is_empty() {
-        eprintln!("no matching sources found.");
+        // A named miss is an error, like hide's; a bare restore-all
+        // finding nothing to do is a clean no-op.
+        match name {
+            Some(name) => bail!("no MIDI source matching {name:?} in the device tree"),
+            None => eprintln!("nothing to restore."),
+        }
     }
     for name in touched {
         println!("restored {name}");
@@ -121,11 +126,17 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     let path = config.unwrap_or_else(|| PathBuf::from("miditool.kdl"));
     if !path.exists() {
         bail!(
-            "no config at {}. Pass a path or create one; see `miditool effects` and the examples directory.",
+            "no config at {}. Pass a path or create one; `miditool effects` lists the \
+             building blocks, and https://sean-reid.github.io/miditool/ has examples.",
             path.display()
         );
     }
-    let cfg = miditool_config::parse_file(&path).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let cfg = miditool_config::parse_file(&path).map_err(|e| {
+        anyhow::anyhow!(
+            "{e}\nrun `miditool effects` for the list of config nodes, or see \
+             https://sean-reid.github.io/miditool/"
+        )
+    })?;
 
     let target = build::output_target(cfg.output);
 
@@ -138,7 +149,9 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
 
     let build_store = Arc::clone(&store);
     let builder: miditool_engine::BuildScene = Box::new(move |idx| {
-        let (scenes, tempo) = &*build_store.lock().unwrap_or_else(|e| e.into_inner());
+        let (scenes, tempo) = &*build_store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let scene = scenes
             .get(idx)
             .ok_or_else(|| format!("no scene at index {idx}"))?;
@@ -150,7 +163,9 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     let reloader: miditool_engine::ReloadScenes = Box::new(move || {
         let cfg = miditool_config::parse_file(&reload_path).map_err(|e| e.to_string())?;
         let defs = scene_defs(&cfg.scenes);
-        *reload_store.lock().unwrap_or_else(|e| e.into_inner()) = (cfg.scenes, cfg.tempo);
+        *reload_store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = (cfg.scenes, cfg.tempo);
         Ok(defs)
     });
 
@@ -163,16 +178,26 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     )
     .context("failed to start the engine")?;
 
-    let _remote = match cfg.remote_port {
-        Some(port) => {
+    let _remote = match cfg.remote {
+        Some(spec) => {
             let backend = backend::EngineBackend::new(handle.clone(), handle.take_tap());
-            let server = miditool_remote::Server::start(port, Arc::new(backend))
+            let addr = std::net::SocketAddr::from((spec.bind, spec.port));
+            let server = miditool_remote::Server::start(addr, Arc::new(backend))
                 .context("failed to start the web remote")?;
-            eprintln!(
-                "remote: http://{}/ (from a phone on this network, try http://{}.local:{port}/)",
-                server.addr(),
-                hostname().unwrap_or_else(|| "<this-computer>".into()),
-            );
+            if spec.bind.is_loopback() {
+                eprintln!(
+                    "remote: http://{}/ (this machine only; set bind=\"0.0.0.0\" on the \
+                     remote node to open it to the network for a phone)",
+                    server.addr(),
+                );
+            } else {
+                eprintln!(
+                    "remote: http://{}/ (from a phone on this network, try http://{}.local:{}/)",
+                    server.addr(),
+                    hostname().unwrap_or_else(|| "<this-computer>".into()),
+                    spec.port,
+                );
+            }
             Some(server)
         }
         None => None,

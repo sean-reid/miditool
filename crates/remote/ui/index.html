@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#e9e6df">
+  <meta name="theme-color" content="#e9e6df" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#201e1a" media="(prefers-color-scheme: dark)">
   <title>miditool remote</title>
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -12,7 +13,7 @@
     <span class="wordmark">miditool</span>
     <span class="dropped" data-testid="dropped" hidden></span>
     <span class="conn-label" data-testid="conn-label" hidden>reconnecting</span>
-    <span class="dot" data-testid="conn-dot" data-state="closed" role="status" aria-label="connection"></span>
+    <span class="dot" data-testid="conn-dot" data-state="closed" role="status" aria-label="reconnecting"><span class="visually-hidden">reconnecting</span></span>
   </header>
 
   <main class="column">
@@ -20,12 +21,12 @@
 
     <section class="monitor-panel" aria-label="monitor">
       <h2 class="panel-title">monitor</h2>
-      <ol class="monitor" data-testid="monitor"></ol>
+      <ol class="monitor" data-testid="monitor" tabindex="0" aria-label="event monitor; space holds new rows"></ol>
     </section>
   </main>
 
   <footer class="panic-bar">
-    <button class="panic" data-testid="panic" type="button">PANIC</button>
+    <button class="panic" data-testid="panic" type="button" disabled>PANIC</button>
   </footer>
 
   <script src="/app.js"></script>

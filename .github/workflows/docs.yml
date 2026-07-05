@@ -52,6 +52,16 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # The Pages backend intermittently rejects deployments that land
+      # close together ("try again later"); one delayed retry absorbs it.
       - name: Deploy to GitHub Pages
         id: deployment
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+      - name: Wait before retrying
+        if: steps.deployment.outcome == 'failure'
+        run: sleep 90
+      - name: Retry the deploy
+        id: retry
+        if: steps.deployment.outcome == 'failure'
         uses: actions/deploy-pages@v4

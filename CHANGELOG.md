@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.5](https://github.com/sean-reid/miditool/compare/v0.1.4...v0.1.5) (2026-07-05)
+
+
+### Features
+
+* config nodes and help for the stochastic wave ([0e45bab](https://github.com/sean-reid/miditool/commit/0e45bab2b7df6544c30b66915a28a19b5464b30f))
+* home config with first-run creation and resolution order ([979e2db](https://github.com/sean-reid/miditool/commit/979e2db05df0841c267ec24e8e3d49d1433fd63a))
+* seven stochastic and cluster effects ([049b560](https://github.com/sean-reid/miditool/commit/049b5609a1292f9d48e6543072d400eb5b8f2577))
+
+
+### Bug Fixes
+
+* float config properties accept integer literals ([770d353](https://github.com/sean-reid/miditool/commit/770d3536d091cafba304aa19aa26ea42d9e48de3))
+
 ## [0.1.4](https://github.com/sean-reid/miditool/compare/v0.1.3...v0.1.4) (2026-07-05)
 
 

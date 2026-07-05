@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "miditool"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -975,7 +975,7 @@ dependencies = [
 
 [[package]]
 name = "miditool-config"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "knus",
  "miette",
@@ -985,7 +985,7 @@ dependencies = [
 
 [[package]]
 name = "miditool-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arrayvec",
  "proptest",
@@ -995,7 +995,7 @@ dependencies = [
 
 [[package]]
 name = "miditool-effects"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "miditool-core",
  "proptest",
@@ -1005,7 +1005,7 @@ dependencies = [
 
 [[package]]
 name = "miditool-engine"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arrayvec",
  "audio_thread_priority",
@@ -1019,7 +1019,7 @@ dependencies = [
 
 [[package]]
 name = "miditool-io"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "midir",
  "thiserror 2.0.18",
@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "miditool-remote"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "axum",
  "futures-util",

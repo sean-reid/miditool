@@ -8,11 +8,12 @@ use miditool_core::{
     Effect, Event, EventBuf, EventKind, MAX_FANOUT, Node, NoteTracker, ProcCx, Sieve,
 };
 use miditool_effects::{
-    AggregateGate, BlockedKeys, Channelize, ClusterAnchor, ClusterFist, ClusterKind, Delay,
-    DensityGovernor, DurationLottery, Echo, KeyDist, Klangfarben, LooseKeys, NoteRoulette,
-    PoissonCloud, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowForm, RowSnap,
-    ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap, Stutter, Telescope, Transpose, VelDist,
-    VelocityCurve, VelocityDice, WedgeMirror,
+    AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, Channelize, ClusterAnchor,
+    ClusterFist, ClusterKind, CrescendoShape, Delay, DensityGovernor, DurationLottery, Echo,
+    EuclideanGate, FeldmanField, KeyDist, Klangfarben, LooseKeys, MassCrescendo, NoteRoulette,
+    PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowForm, RowSnap,
+    ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap, Stutter, Talea, Telescope, Transpose,
+    VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
 };
 use proptest::prelude::*;
 
@@ -62,6 +63,10 @@ fn snaps() -> impl Strategy<Value = SieveSnap> {
         Just(SieveSnap::Down),
         Just(SieveSnap::Drop),
     ]
+}
+
+fn shapes() -> impl Strategy<Value = CrescendoShape> {
+    prop_oneof![Just(CrescendoShape::Ramp), Just(CrescendoShape::Arch)]
 }
 
 fn cluster_kinds() -> impl Strategy<Value = ClusterKind> {
@@ -465,6 +470,116 @@ proptest! {
         ]);
         assert_no_orphans(&mut node, &steps);
     }
+
+    // Raw sequences: dropped note-ons swallow their offs, and deferred
+    // ons emit their offs late but balanced; the harness checks balance,
+    // not timing.
+    #[test]
+    fn euclidean_gate_no_orphans(
+        steps in steps(),
+        k in 0u8..=70,
+        n in 0u8..=70,
+        rotation: u8,
+        pulse in 0u64..=2_000_000_000,
+        defer: bool,
+    ) {
+        let fx = EuclideanGate::new(k, n, rotation, pulse, defer);
+        assert_no_orphans(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn quantize_no_orphans(
+        steps in steps(),
+        grid in 0u64..=2_000_000_000,
+        strength in 0.0f32..=1.5,
+    ) {
+        assert_no_orphans(&mut leaf(Quantize::new(grid, strength)), &steps);
+    }
+
+    // Raw sequences on purpose: the talea swallows the player's offs and
+    // every on carries its own scheduled off, like the duration lottery.
+    #[test]
+    fn talea_no_orphans(
+        steps in steps(),
+        durations in prop::collection::vec(0u64..=2_000_000_000, 0..40),
+    ) {
+        assert_no_orphans(&mut leaf(Talea::new(&durations)), &steps);
+    }
+
+    #[test]
+    fn added_value_no_orphans(
+        steps in steps(),
+        seed: u64,
+        unit in 0u64..=2_000_000_000,
+        extend_p in 0.0f32..=1.5,
+        defer_p in 0.0f32..=1.5,
+    ) {
+        let fx = AddedValue::new(seed, unit, extend_p, defer_p);
+        assert_no_orphans(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn accent_groups_no_orphans(
+        steps in steps(),
+        groups in prop::collection::vec(0u8..=20, 0..6),
+        accent: u8,
+        rest: u8,
+    ) {
+        let fx = AccentGroups::new(&groups, accent, rest);
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    #[test]
+    fn feldman_field_no_orphans(
+        steps in steps(),
+        seed: u64,
+        floor: u8,
+        ceiling: u8,
+        jitter: u8,
+    ) {
+        let fx = FeldmanField::new(seed, floor, ceiling, jitter);
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    #[test]
+    fn velocity_invert_no_orphans(steps in steps(), pivot: u8) {
+        assert_no_orphans(&mut leaf(VelocityInvert::new(pivot)), &balanced(&steps));
+    }
+
+    #[test]
+    fn velocity_router_no_orphans(
+        steps in steps(),
+        low: u8,
+        high: u8,
+        soft_ch: u8,
+        mid_ch: u8,
+        loud_ch: u8,
+    ) {
+        let fx = VelocityRouter::new(low, high, soft_ch, mid_ch, loud_ch);
+        assert_no_orphans(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn anti_accent_no_orphans(
+        steps in steps(),
+        seed: u64,
+        level: u8,
+        every in 0u64..=10_000_000_000,
+    ) {
+        let fx = AntiAccent::new(seed, level, every);
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
+
+    #[test]
+    fn mass_crescendo_no_orphans(
+        steps in steps(),
+        period in 0u64..=10_000_000_000,
+        depth in 0.0f32..=1.5,
+        shape in shapes(),
+    ) {
+        let fx = MassCrescendo::new(period, depth, shape);
+        assert_no_orphans(&mut leaf(fx), &balanced(&steps));
+    }
 }
 
 /// Chain-stage truncation must never split a self-contained on/off pair.
@@ -664,4 +779,78 @@ fn stochastic_worst_case_fanout_fits_the_buffer() {
         0,
         "poisson_cloud: dropped"
     );
+}
+
+/// The time, rhythm, and dynamics effects, fed a note-on and then its
+/// worst case (a retrigger of the same key, which adds a cut where the
+/// effect tracks notes), must fan out within one EventBuf and drop
+/// nothing.
+#[test]
+fn time_and_dynamics_worst_case_fanout_fits_the_buffer() {
+    let cases: Vec<(&str, Box<dyn Effect>, usize, usize)> = vec![
+        (
+            "euclidean_gate",
+            Box::new(EuclideanGate::new(1, 2, 0, u64::MAX, true)),
+            1,
+            2,
+        ),
+        ("quantize", Box::new(Quantize::new(u64::MAX, 1.0)), 1, 2),
+        ("talea", Box::new(Talea::new(&[u64::MAX])), 2, 2),
+        (
+            "added_value",
+            Box::new(AddedValue::new(0, u64::MAX, 1.0, 1.0)),
+            1,
+            2,
+        ),
+        (
+            "accent_groups",
+            Box::new(AccentGroups::new(&[16], 127, 1)),
+            1,
+            1,
+        ),
+        (
+            "feldman_field",
+            Box::new(FeldmanField::new(0, 1, 127, 20)),
+            1,
+            1,
+        ),
+        ("velocity_invert", Box::new(VelocityInvert::new(127)), 1, 1),
+        (
+            "velocity_router",
+            Box::new(VelocityRouter::new(1, 127, 0, 1, 2)),
+            1,
+            2,
+        ),
+        (
+            "anti_accent",
+            Box::new(AntiAccent::new(0, 1, u64::MAX)),
+            1,
+            1,
+        ),
+        (
+            "mass_crescendo",
+            Box::new(MassCrescendo::new(u64::MAX, 1.0, CrescendoShape::Arch)),
+            1,
+            1,
+        ),
+    ];
+    let on = Event::new(
+        0,
+        EventKind::NoteOn {
+            ch: 0,
+            key: 60,
+            vel: 127,
+        },
+    );
+    for (name, mut fx, first, retrigger) in cases {
+        let cx = ProcCx::at(0);
+        let mut out = EventBuf::new();
+        fx.process(&on, &mut out, &cx);
+        assert_eq!(out.len(), first, "{name}: note-on fanout");
+        out.clear();
+        fx.process(&on, &mut out, &cx);
+        assert_eq!(out.len(), retrigger, "{name}: retrigger fanout");
+        assert!(out.len() <= MAX_FANOUT, "{name}: over MAX_FANOUT");
+        assert_eq!(cx.dropped.load(Ordering::Relaxed), 0, "{name}: dropped");
+    }
 }

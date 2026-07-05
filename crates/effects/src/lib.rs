@@ -13,9 +13,13 @@
 //! documents its worst-case fanout, kept well under `MAX_FANOUT` so a single
 //! input event never overflows the buffer.
 
+mod defer;
 mod router;
 
+pub mod accent_groups;
+pub mod added_value;
 pub mod aggregate_gate;
+pub mod anti_accent;
 pub mod blocked_keys;
 pub mod channelize;
 pub mod cluster_fist;
@@ -23,10 +27,14 @@ pub mod delay;
 pub mod density_governor;
 pub mod duration_lottery;
 pub mod echo;
+pub mod euclidean_gate;
+pub mod feldman_field;
 pub mod klangfarben;
 pub mod loose_keys;
+pub mod mass_crescendo;
 pub mod note_roulette;
 pub mod poisson_cloud;
+pub mod quantize;
 pub mod registral_scatter;
 pub mod resonance_halo;
 pub mod restrike;
@@ -35,13 +43,19 @@ pub mod row_snap;
 pub mod shuffle_lock;
 pub mod sieve_quantizer;
 pub mod stutter;
+pub mod talea;
 pub mod telescope;
 pub mod transpose;
 pub mod velocity_curve;
 pub mod velocity_dice;
+pub mod velocity_invert;
+pub mod velocity_router;
 pub mod wedge_mirror;
 
+pub use accent_groups::AccentGroups;
+pub use added_value::AddedValue;
 pub use aggregate_gate::AggregateGate;
+pub use anti_accent::AntiAccent;
 pub use blocked_keys::BlockedKeys;
 pub use channelize::Channelize;
 pub use cluster_fist::{ClusterAnchor, ClusterFist, ClusterKind};
@@ -49,10 +63,14 @@ pub use delay::Delay;
 pub use density_governor::DensityGovernor;
 pub use duration_lottery::DurationLottery;
 pub use echo::Echo;
+pub use euclidean_gate::EuclideanGate;
+pub use feldman_field::FeldmanField;
 pub use klangfarben::Klangfarben;
 pub use loose_keys::{KeyDist, LooseKeys};
+pub use mass_crescendo::{CrescendoShape, MassCrescendo};
 pub use note_roulette::NoteRoulette;
 pub use poisson_cloud::PoissonCloud;
+pub use quantize::Quantize;
 pub use registral_scatter::RegistralScatter;
 pub use resonance_halo::ResonanceHalo;
 pub use restrike::Restrike;
@@ -61,10 +79,13 @@ pub use row_snap::{RowForm, RowSnap};
 pub use shuffle_lock::{ShuffleLock, ShuffleMode};
 pub use sieve_quantizer::{SieveQuantizer, SieveSnap};
 pub use stutter::Stutter;
+pub use talea::Talea;
 pub use telescope::Telescope;
 pub use transpose::Transpose;
 pub use velocity_curve::VelocityCurve;
 pub use velocity_dice::{VelDist, VelocityDice};
+pub use velocity_invert::VelocityInvert;
+pub use velocity_router::VelocityRouter;
 pub use wedge_mirror::WedgeMirror;
 
 #[cfg(test)]

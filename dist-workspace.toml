@@ -9,6 +9,10 @@ cargo-dist-version = "0.32.0"
 ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell"]
+# Trigger releases by workflow dispatch instead of tag push, because the
+# v-tag is created by release-please with a token whose events cannot
+# start workflows
+dispatch-releases = true
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 

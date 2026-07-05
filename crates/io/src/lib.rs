@@ -6,6 +6,9 @@
 //! parameters, so they are stringified into [`IoError::Midir`] at the
 //! boundary.
 
+#[cfg(target_os = "macos")]
+pub mod hide;
+
 use midir::{Ignore, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection};
 use thiserror::Error;
 
@@ -28,7 +31,10 @@ pub enum IoError {
     #[error("midir: {0}")]
     Midir(String),
     /// Virtual ports require a unix backend (CoreMIDI or ALSA).
-    #[error("virtual MIDI ports are not supported on this platform")]
+    #[error(
+        "virtual MIDI ports are not supported on this platform; on Windows, \
+         install loopMIDI, create a port there, and use `output device=\"...\"`"
+    )]
     VirtualUnsupported,
 }
 

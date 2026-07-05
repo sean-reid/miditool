@@ -37,10 +37,15 @@ pub fn bench(rounds: u32) -> anyhow::Result<()> {
          this platform cannot create them",
     )?;
 
-    let engine = miditool_engine::Engine::run(
+    let scenes = vec![miditool_engine::SceneDef {
+        name: "bench".to_owned(),
+        kill_on_exit: false,
+    }];
+    let (engine, _handle) = miditool_engine::Engine::run(
         Some(SOURCE),
         &OutputTarget::Virtual(SINK.to_owned()),
-        Node::Leaf(Box::new(Pass)),
+        scenes,
+        Box::new(|_| Ok(Node::Leaf(Box::new(Pass)))),
         None,
     )
     .context("failed to start the pass-through engine")?;

@@ -93,10 +93,10 @@ fn check_config(checkup: &mut Checkup, config: Option<PathBuf>) {
     };
     match miditool_config::parse_file(&path) {
         Ok(cfg) => checkup.ok(format!(
-            "config {}: parses, {} top-level effect{}",
+            "config {}: parses, {} scene{}",
             path.display(),
-            cfg.chain.len(),
-            plural(cfg.chain.len()),
+            cfg.scenes.len(),
+            plural(cfg.scenes.len()),
         )),
         Err(e) => checkup.fail(format!("config {}: {e}", path.display())),
     }

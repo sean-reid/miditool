@@ -10,8 +10,15 @@ use std::time::{Duration, Instant};
 
 use miditool_core::graph::Node;
 use miditool_effects::Transpose;
-use miditool_engine::Engine;
+use miditool_engine::{Engine, SceneDef};
 use miditool_io::{OutputTarget, open_input, open_output};
+
+fn one_scene() -> Vec<SceneDef> {
+    vec![SceneDef {
+        name: "test".to_owned(),
+        kill_on_exit: false,
+    }]
+}
 
 /// Wait until `pred` is true or a timeout expires. Virtual port plumbing is
 /// asynchronous in CoreMIDI, so polling beats fixed sleeps.
@@ -33,11 +40,11 @@ fn transposes_notes_end_to_end() {
         .expect("create fake keyboard");
 
     // The engine bridges the fake keyboard to its own virtual output.
-    let root = Node::Leaf(Box::new(Transpose::new(12)));
-    let engine = Engine::run(
+    let (engine, _handle) = Engine::run(
         Some("miditool test kb"),
         &OutputTarget::Virtual("miditool test out".into()),
-        root,
+        one_scene(),
+        Box::new(|_| Ok(Node::Leaf(Box::new(Transpose::new(12))))),
         None,
     )
     .expect("start engine");
@@ -93,11 +100,15 @@ fn echoes_arrive_on_schedule() {
         .expect("create fake keyboard");
 
     // Two echoes 60ms apart, full velocity so the copies are identical.
-    let root = Node::Leaf(Box::new(miditool_effects::Echo::new(2, 60_000_000, 1.0, 0)));
-    let engine = Engine::run(
+    let (engine, _handle) = Engine::run(
         Some("miditool echo kb"),
         &OutputTarget::Virtual("miditool echo out".into()),
-        root,
+        one_scene(),
+        Box::new(|_| {
+            Ok(Node::Leaf(Box::new(miditool_effects::Echo::new(
+                2, 60_000_000, 1.0, 0,
+            ))))
+        }),
         None,
     )
     .expect("start engine");

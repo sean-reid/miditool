@@ -1,10 +1,11 @@
+mod backend;
 mod bench;
 mod build;
 mod doctor;
 mod pretty;
 
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
@@ -126,20 +127,56 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     }
     let cfg = miditool_config::parse_file(&path).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let root = build::build_graph(cfg.chain, cfg.tempo);
     let target = build::output_target(cfg.output);
 
-    // Edits to the config swap the effect graph in place; held notes drain
-    // through the graph that opened them. Input and output changes need a
-    // restart, so the builder reuses only the chain and tempo.
-    let reload_path = path.clone();
-    let builder: miditool_engine::BuildGraph = Box::new(move || {
-        let cfg = miditool_config::parse_file(&reload_path).map_err(|e| e.to_string())?;
-        Ok(build::build_graph(cfg.chain, cfg.tempo))
+    // Scene specs live in a store shared by the scene builder and the
+    // reload closure: edits to the config swap graphs in place while held
+    // notes drain through the graph that opened them. Input and output
+    // changes need a restart.
+    let store = Arc::new(Mutex::new((cfg.scenes.clone(), cfg.tempo)));
+    let defs = scene_defs(&cfg.scenes);
+
+    let build_store = Arc::clone(&store);
+    let builder: miditool_engine::BuildScene = Box::new(move |idx| {
+        let (scenes, tempo) = &*build_store.lock().unwrap_or_else(|e| e.into_inner());
+        let scene = scenes
+            .get(idx)
+            .ok_or_else(|| format!("no scene at index {idx}"))?;
+        Ok(build::build_graph(scene.chain.clone(), *tempo))
     });
-    let engine =
-        miditool_engine::Engine::run(cfg.input.as_deref(), &target, root, Some((path, builder)))
-            .context("failed to start the engine")?;
+
+    let reload_store = Arc::clone(&store);
+    let reload_path = path.clone();
+    let reloader: miditool_engine::ReloadScenes = Box::new(move || {
+        let cfg = miditool_config::parse_file(&reload_path).map_err(|e| e.to_string())?;
+        let defs = scene_defs(&cfg.scenes);
+        *reload_store.lock().unwrap_or_else(|e| e.into_inner()) = (cfg.scenes, cfg.tempo);
+        Ok(defs)
+    });
+
+    let (engine, mut handle) = miditool_engine::Engine::run(
+        cfg.input.as_deref(),
+        &target,
+        defs,
+        builder,
+        Some((path, reloader)),
+    )
+    .context("failed to start the engine")?;
+
+    let _remote = match cfg.remote_port {
+        Some(port) => {
+            let backend = backend::EngineBackend::new(handle.clone(), handle.take_tap());
+            let server = miditool_remote::Server::start(port, Arc::new(backend))
+                .context("failed to start the web remote")?;
+            eprintln!(
+                "remote: http://{}/ (from a phone on this network, try http://{}.local:{port}/)",
+                server.addr(),
+                hostname().unwrap_or_else(|| "<this-computer>".into()),
+            );
+            Some(server)
+        }
+        None => None,
+    };
 
     // Hide only after the engine has connected: existing connections keep
     // receiving from a hidden source.
@@ -179,6 +216,27 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     }
     engine.stop().context("engine wind-down failed")?;
     Ok(())
+}
+
+fn scene_defs(scenes: &[miditool_config::SceneSpec]) -> Vec<miditool_engine::SceneDef> {
+    scenes
+        .iter()
+        .map(|s| miditool_engine::SceneDef {
+            name: s.name.clone(),
+            kill_on_exit: s.kill_on_exit,
+        })
+        .collect()
+}
+
+/// Best-effort machine name for the "open this on your phone" hint.
+fn hostname() -> Option<String> {
+    let out = std::process::Command::new("hostname")
+        .arg("-s")
+        .output()
+        .ok()?;
+    let name = String::from_utf8(out.stdout).ok()?;
+    let name = name.trim();
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 fn ports() -> anyhow::Result<()> {

@@ -125,7 +125,14 @@ config file shape
   input \"Roland\"                   optional; substring of the input port
   output virtual=\"miditool Out\"    default; or output device=\"IAC\"
   tempo 120                          default; beats per minute for beats=
+  remote port=8320                   optional; phone/tablet web remote
   ...effects...                      top level is an implicit chain
+  scene \"name\" { ...effects... }    or: one or more named scenes
+
+Scenes replace the bare chain; the two styles don't mix. Each scene is
+its own chain, and switch=\"kill\" cuts sounding notes when you leave it
+(the default, switch=\"let-ring\", lets them ring out). The remote serves
+a scene switcher to browsers on the given port.
 
 Time properties (time=, interval=, first=) take \"250ms\" or \"1.5s\", or
 beats=0.5 against the tempo. Randomness is deterministic: the same seed

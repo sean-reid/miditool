@@ -99,6 +99,17 @@ effects
       it. Output maps into floor..ceiling.
   channelize <1-16>
       Send everything to one MIDI channel.
+  delay time=\"250ms\"
+      Hold everything back by a fixed time.
+  echo repeats=3 time=\"300ms\" decay=0.6 transpose=0
+      Fading repeats after each note, every repeat decay times softer
+      and shifted by transpose semitones.
+  restrike seed=<u64> interval=\"2s\" jitter=0.15 decay=0.7 floor=8 max=12
+      Re-strike held notes on a jittered interval, fading toward the
+      floor velocity, at most max strikes per note.
+  stutter repeats=6 first=\"30ms\" curve=1.0
+      Ratchet each note into a burst: gaps start at first, then stretch
+      (curve above 1) or tighten (below 1) as the burst plays out.
   pass / discard
       Identity and mute, mostly useful inside fork branches.
 
@@ -113,9 +124,12 @@ routing
 config file shape
   input \"Roland\"                   optional; substring of the input port
   output virtual=\"miditool Out\"    default; or output device=\"IAC\"
+  tempo 120                          default; beats per minute for beats=
   ...effects...                      top level is an implicit chain
 
-Randomness is deterministic: the same seed always gives the same result.
+Time properties (time=, interval=, first=) take \"250ms\" or \"1.5s\", or
+beats=0.5 against the tempo. Randomness is deterministic: the same seed
+always gives the same result.
 ";
 
 #[cfg(test)]

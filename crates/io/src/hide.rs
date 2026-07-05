@@ -171,6 +171,40 @@ pub fn hide_source(name: &str) -> Result<HiddenSource, IoError> {
     })
 }
 
+/// Display names of sources that are present in the device tree but
+/// absent from flat enumeration. A hidden (private) source disappears
+/// from flat enumeration, but so does an offline device, and the two
+/// look the same from here; callers should present the result as
+/// "possibly hidden" and point at [`unhide_sources`], which clears the
+/// flag either way.
+pub fn hidden_sources() -> Result<Vec<String>, IoError> {
+    ensure_client();
+    let mut visible = Vec::new();
+    let mut hidden = Vec::new();
+    unsafe {
+        for i in 0..MIDIGetNumberOfSources() {
+            if let Some(display) = display_name(MIDIGetSource(i)) {
+                visible.push(display);
+            }
+        }
+        for d in 0..MIDIGetNumberOfDevices() {
+            let device = MIDIGetDevice(d);
+            for e in 0..MIDIDeviceGetNumberOfEntities(device) {
+                let entity = MIDIDeviceGetEntity(device, e);
+                for s in 0..MIDIEntityGetNumberOfSources(entity) {
+                    let Some(display) = display_name(MIDIEntityGetSource(entity, s)) else {
+                        continue;
+                    };
+                    if !visible.contains(&display) && !hidden.contains(&display) {
+                        hidden.push(display);
+                    }
+                }
+            }
+        }
+    }
+    Ok(hidden)
+}
+
 /// Restore visibility of hidden sources after a crash. Walks the device
 /// tree, which reaches endpoints that flat enumeration no longer shows,
 /// and clears the private flag on every source whose name contains `name`

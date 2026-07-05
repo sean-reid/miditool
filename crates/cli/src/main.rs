@@ -1,4 +1,6 @@
+mod bench;
 mod build;
+mod doctor;
 mod pretty;
 
 use std::path::PathBuf;
@@ -49,6 +51,17 @@ enum Cmd {
         /// omitted.
         name: Option<String>,
     },
+    /// Measure round-trip latency through a pass-through engine.
+    Bench {
+        /// Number of note pairs to send.
+        #[arg(long, default_value_t = 500)]
+        rounds: u32,
+    },
+    /// Check the environment: ports, config, hidden sources, DAW state.
+    Doctor {
+        /// Config to validate. Defaults to ./miditool.kdl when present.
+        config: Option<PathBuf>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -62,6 +75,8 @@ fn main() -> anyhow::Result<()> {
         }
         Cmd::Hide { name } => hide(name),
         Cmd::Unhide { name } => unhide(name),
+        Cmd::Bench { rounds } => bench::bench(rounds),
+        Cmd::Doctor { config } => doctor::doctor(config),
     }
 }
 
@@ -111,10 +126,20 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     }
     let cfg = miditool_config::parse_file(&path).map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let root = build::build_graph(cfg.chain);
+    let root = build::build_graph(cfg.chain, cfg.tempo);
     let target = build::output_target(cfg.output);
-    let engine = miditool_engine::Engine::run(cfg.input.as_deref(), &target, root)
-        .context("failed to start the engine")?;
+
+    // Edits to the config swap the effect graph in place; held notes drain
+    // through the graph that opened them. Input and output changes need a
+    // restart, so the builder reuses only the chain and tempo.
+    let reload_path = path.clone();
+    let builder: miditool_engine::BuildGraph = Box::new(move || {
+        let cfg = miditool_config::parse_file(&reload_path).map_err(|e| e.to_string())?;
+        Ok(build::build_graph(cfg.chain, cfg.tempo))
+    });
+    let engine =
+        miditool_engine::Engine::run(cfg.input.as_deref(), &target, root, Some((path, builder)))
+            .context("failed to start the engine")?;
 
     // Hide only after the engine has connected: existing connections keep
     // receiving from a hidden source.

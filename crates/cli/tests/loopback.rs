@@ -38,6 +38,7 @@ fn transposes_notes_end_to_end() {
         Some("miditool test kb"),
         &OutputTarget::Virtual("miditool test out".into()),
         root,
+        None,
     )
     .expect("start engine");
 
@@ -84,4 +85,57 @@ fn transposes_notes_end_to_end() {
         "wind-down should release the transposed hanging note, got {:?}",
         received.lock().unwrap()
     );
+}
+
+#[test]
+fn echoes_arrive_on_schedule() {
+    let mut keyboard = open_output(&OutputTarget::Virtual("miditool echo kb".into()))
+        .expect("create fake keyboard");
+
+    // Two echoes 60ms apart, full velocity so the copies are identical.
+    let root = Node::Leaf(Box::new(miditool_effects::Echo::new(2, 60_000_000, 1.0, 0)));
+    let engine = Engine::run(
+        Some("miditool echo kb"),
+        &OutputTarget::Virtual("miditool echo out".into()),
+        root,
+        None,
+    )
+    .expect("start engine");
+
+    type Arrivals = Arc<Mutex<Vec<(Instant, Vec<u8>)>>>;
+    let received: Arrivals = Arc::default();
+    let sink = Arc::clone(&received);
+    let _capture = open_input(Some("miditool echo out"), move |_stamp, bytes| {
+        sink.lock().unwrap().push((Instant::now(), bytes.to_vec()));
+    })
+    .expect("open capture port");
+
+    sleep(Duration::from_millis(300));
+    keyboard.send(&[0x90, 60, 100]).unwrap();
+    keyboard.send(&[0x80, 60, 0]).unwrap();
+
+    // Original plus two echoes, on and off: six messages.
+    assert!(
+        wait_for(|| received.lock().unwrap().len() >= 6),
+        "expected 6 messages, got {:?}",
+        received
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, b)| b.clone())
+            .collect::<Vec<_>>()
+    );
+    let msgs = received.lock().unwrap();
+    let ons: Vec<_> = msgs.iter().filter(|(_, b)| b[0] == 0x90).collect();
+    assert_eq!(ons.len(), 3, "one original and two echoed note-ons");
+    let gap1 = ons[1].0.duration_since(ons[0].0).as_millis();
+    let gap2 = ons[2].0.duration_since(ons[1].0).as_millis();
+    for gap in [gap1, gap2] {
+        assert!(
+            (40..=80).contains(&gap),
+            "echo gap should be near 60ms, got {gap}ms"
+        );
+    }
+    drop(msgs);
+    engine.stop().expect("stop engine");
 }

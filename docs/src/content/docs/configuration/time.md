@@ -3,7 +3,7 @@ title: Time and tempo
 description: Writing times as durations or beats, and how the tempo node converts beats to real time.
 ---
 
-Four effects take a time: [`delay`](/miditool/effects/delay/) (`time=`), [`echo`](/miditool/effects/echo/) (`time=`), [`restrike`](/miditool/effects/restrike/) (`interval=`), and [`stutter`](/miditool/effects/stutter/) (`first=`). Each accepts the same two spellings, and exactly one of them per node.
+Any effect parameter that measures time (`time=`, `interval=`, `first=`, `duration=`, `mean=`, `window=`, `decay=`, and whatever future effects add) accepts the same two spellings, and exactly one of them per node: a duration string, or `beats=` against the tempo. Each effect's page names its time properties.
 
 ## Durations
 

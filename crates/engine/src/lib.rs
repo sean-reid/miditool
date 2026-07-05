@@ -1,179 +1,240 @@
 //! The realtime run loop: decode incoming packets, run the effect graph,
-//! encode and send the results, and track what is sounding so shutdown
+//! and hand the results to a dedicated scheduler thread that sends each
+//! event at its intended time, tracking what is sounding so shutdown
 //! leaves no hanging notes.
 //!
-//! The hot path is [`Pipeline`], a pure function of bytes in to bytes out
-//! with no I/O dependencies, so it is fully testable without hardware.
-//! [`Engine`] is the thin layer that wires a pipeline between real MIDI
-//! ports: the pipeline and the output connection are moved into the input
-//! callback outright, so the per-event path takes no locks.
+//! All timestamps live on one monotonic clock, captured as an [`Instant`]
+//! when the engine starts: the callback stamps incoming events with the
+//! elapsed nanoseconds, time-based effects add deltas, and an event's
+//! `time` is the moment the scheduler sends it. The pieces:
+//!
+//! - [`Pipeline`] (pure, hot path): decode and route through the graph,
+//!   emitting possibly future-timed events. Owns the hot-reload graph
+//!   generations so a swapped-out graph keeps draining its held notes.
+//! - The scheduler thread (owns the output and the note tracker): fed by
+//!   a lock-free SPSC ring, woken by unpark, promoted to realtime
+//!   priority when the OS allows it.
+//! - [`Engine`]: the wiring, plus optional config-file watching that
+//!   rebuilds and swaps the graph without interrupting playing.
 
+mod pipeline;
+mod reload;
+mod scheduler;
+
+use std::cell::RefCell;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::thread::{self, JoinHandle, Thread};
 use std::time::Instant;
 
-use miditool_core::event::{CC_ALL_NOTES_OFF, CC_ALL_SOUND_OFF, CC_RESET_CONTROLLERS};
-use miditool_core::wire::{self, Decoded, Decoder};
-use miditool_core::{Event, EventBuf, EventKind, Node, NoteTracker, ProcCx, Timestamp};
-use miditool_io::{Input, IoError, Output, OutputTarget};
+use audio_thread_priority::promote_current_thread_to_real_time;
+use miditool_core::{Event, Node};
+use miditool_io::{Input, IoError, OutputTarget};
 use thiserror::Error;
 
+pub use pipeline::{MAX_DRAINING, Pipeline};
+
+use scheduler::{Control, Msg, RING_CAPACITY, now_ns, scheduler_loop};
+
+/// Builds a fresh graph from the current config, called on the watcher
+/// thread for every debounced change.
+pub type BuildGraph = Box<dyn Fn() -> Result<Node, String> + Send>;
+
 /// Errors from engine setup and teardown. The per-event path reports
-/// nothing: a failed send mid-stream has no one to tell.
+/// nothing: a failed send mid-stream has no one to tell, though the first
+/// such error surfaces from [`Engine::stop`].
 #[derive(Debug, Error)]
 pub enum EngineError {
     #[error(transparent)]
     Io(#[from] IoError),
+    #[error("config watcher: {0}")]
+    Watch(#[from] notify::Error),
+    #[error("could not spawn the scheduler thread: {0}")]
+    Spawn(std::io::Error),
+    #[error("the scheduler thread panicked")]
+    SchedulerPanicked,
 }
 
-/// The pure hot path: decoder, effect graph, and boundary note tracker.
-///
-/// Callers feed it raw input packets plus a monotonic timestamp and give
-/// it a `send` sink for outgoing wire bytes. Nothing here allocates or
-/// blocks per event.
-pub struct Pipeline {
-    decoder: Decoder,
-    root: Node,
-    tracker: NoteTracker,
+/// The callback's single-producer handle to the scheduler: the ring, the
+/// running sequence counter, and the thread to unpark.
+struct Feeder {
+    ring: rtrb::Producer<Msg>,
+    seq: u64,
+    dropped: Arc<AtomicU64>,
+    scheduler: Thread,
 }
 
-impl Pipeline {
-    pub fn new(root: Node) -> Self {
-        Self {
-            decoder: Decoder::new(),
-            root,
-            tracker: NoteTracker::new(),
+impl Feeder {
+    fn event(&mut self, ev: Event) {
+        let seq = self.seq;
+        self.seq += 1;
+        if self.ring.push(Msg::Event { seq, ev }).is_err() {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    /// Feed one incoming packet. `now_ns` is the engine-monotonic
-    /// timestamp in nanoseconds.
-    ///
-    /// Channel voice messages are decoded, run through the graph, and the
-    /// results encoded and handed to `send`. SysEx and system common
-    /// packets (first byte 0xF0..=0xF7) are forwarded verbatim without
-    /// decoding, as are realtime bytes. Every channel event actually sent
-    /// is observed by the note tracker.
-    pub fn handle(&mut self, now_ns: Timestamp, bytes: &[u8], send: &mut impl FnMut(&[u8])) {
-        match bytes.first() {
-            None => return,
-            // SysEx and system common: not modeled, pass the packet through.
-            Some(&b) if (0xF0..=0xF7).contains(&b) => {
-                send(bytes);
-                return;
+    fn raw(&mut self, bytes: &[u8]) {
+        let msg = if bytes.len() <= 3 {
+            let mut buf = [0u8; 3];
+            buf[..bytes.len()].copy_from_slice(bytes);
+            Msg::Raw {
+                len: bytes.len() as u8,
+                bytes: buf,
             }
-            _ => {}
-        }
-        // Destructure so the decoder can borrow mutably alongside the rest.
-        let Self {
-            decoder,
-            root,
-            tracker,
-        } = self;
-        let cx = ProcCx::at(now_ns);
-        let mut buf = [0u8; 3];
-        decoder.feed(bytes, |decoded| match decoded {
-            Decoded::Event(kind) => {
-                let ev = Event::new(now_ns, kind);
-                let mut out = EventBuf::new();
-                root.process(&ev, &mut out, &cx);
-                for e in &out {
-                    send(wire::encode(&e.kind, &mut buf));
-                    tracker.observe(&e.kind);
-                }
-            }
-            Decoded::Realtime(byte) => send(&[byte]),
-            Decoded::Pending => {}
-        });
-    }
-
-    /// Flush all effects, then silence the tracker, sending the resulting
-    /// bytes. Leaves the pipeline clean for reuse.
-    pub fn shutdown(&mut self, now_ns: Timestamp, send: &mut impl FnMut(&[u8])) {
-        let cx = ProcCx::at(now_ns);
-        let mut buf = [0u8; 3];
-        let mut out = EventBuf::new();
-        self.root.flush(&mut out, &cx);
-        for e in &out {
-            send(wire::encode(&e.kind, &mut buf));
-            self.tracker.observe(&e.kind);
-        }
-        out.clear();
-        self.tracker.silence(now_ns, &mut out);
-        for e in &out {
-            send(wire::encode(&e.kind, &mut buf));
+        } else {
+            // The documented hot-path allocation exception: SysEx only.
+            Msg::Sysex(bytes.into())
+        };
+        if self.ring.push(msg).is_err() {
+            self.dropped.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    /// Emergency stop: silence everything the tracker has seen, then send
-    /// All Notes Off, All Sound Off, and Reset All Controllers on all 16
-    /// channels for anything the tracker could not know about.
-    pub fn panic(&mut self, now_ns: Timestamp, send: &mut impl FnMut(&[u8])) {
-        let mut buf = [0u8; 3];
-        let mut out = EventBuf::new();
-        self.tracker.silence(now_ns, &mut out);
-        for e in &out {
-            send(wire::encode(&e.kind, &mut buf));
-        }
-        for ch in 0..16 {
-            for cc in [CC_ALL_NOTES_OFF, CC_ALL_SOUND_OFF, CC_RESET_CONTROLLERS] {
-                let kind = EventKind::ControlChange { ch, cc, value: 0 };
-                send(wire::encode(&kind, &mut buf));
-            }
-        }
+    fn wake(&self) {
+        self.scheduler.unpark();
     }
 }
 
-/// State owned by the MIDI input callback thread.
-type Owned = (Pipeline, Output);
+/// State owned by the MIDI input callback thread. The feeder sits in a
+/// `RefCell` because `Pipeline::handle` takes two sink closures that both
+/// need it; they never overlap, so the borrow always succeeds.
+struct CallbackState {
+    pipeline: Pipeline,
+    feeder: RefCell<Feeder>,
+    graphs: mpsc::Receiver<Node>,
+}
 
-/// A running engine: one input port, one pipeline, one output.
+/// A running engine: one input port, one pipeline, one scheduler thread
+/// owning the output.
 ///
 /// Construct with [`Engine::run`]; stop cleanly with [`Engine::stop`].
 /// Dropping a running engine performs the same flush-and-silence sequence,
 /// ignoring errors.
 pub struct Engine {
-    input: Option<Input<Owned>>,
+    input: Option<Input<CallbackState>>,
+    scheduler: Option<JoinHandle<Option<IoError>>>,
+    controls: mpsc::Sender<Control>,
     stop: Arc<AtomicBool>,
-    started: Instant,
+    epoch: Instant,
+    dropped: Arc<AtomicU64>,
+    _watcher: Option<reload::Watcher>,
 }
 
 impl Engine {
-    /// Open the output, build a pipeline around `root`, and connect it to
-    /// the chosen input port. Processing starts immediately on the
-    /// backend's MIDI thread.
+    /// Open the output, start the scheduler thread, build a pipeline
+    /// around `root`, and connect it to the chosen input port. Processing
+    /// starts immediately on the backend's MIDI thread.
     ///
     /// `input` selects the source port as in [`miditool_io::open_input`]:
     /// a case-insensitive substring, or `None` to auto-pick.
+    ///
+    /// With `reload` set to `Some((config_path, builder))`, the config
+    /// file is watched and each change rebuilds the graph off the hot
+    /// path, swapping it in on the next incoming MIDI event (an idle rig
+    /// applies the swap when the next event arrives, which is exactly
+    /// when it can first matter). Build errors go to stderr and leave the
+    /// running graph in place: a broken edit must never kill a
+    /// performance.
     pub fn run(
         input: Option<&str>,
         output: &OutputTarget,
         root: Node,
+        reload: Option<(PathBuf, BuildGraph)>,
     ) -> Result<Engine, EngineError> {
-        let out = miditool_io::open_output(output)?;
-        let pipeline = Pipeline::new(root);
+        let mut out = miditool_io::open_output(output)?;
+        let epoch = Instant::now();
+
+        let (ring_tx, ring_rx) = rtrb::RingBuffer::new(RING_CAPACITY);
+        let (control_tx, control_rx) = mpsc::channel();
+        let scheduler = thread::Builder::new()
+            .name("miditool scheduler".into())
+            .spawn(move || {
+                // Best effort: an unprivileged scheduler still works, just
+                // with coarser wakeups under load. 512 frames at 48 kHz is
+                // a plausible period for an event thread.
+                if let Err(e) = promote_current_thread_to_real_time(512, 48_000) {
+                    eprintln!("miditool: scheduler thread runs without realtime priority: {e:?}");
+                }
+                let mut first_err: Option<IoError> = None;
+                scheduler_loop(epoch, ring_rx, control_rx, &mut |bytes| {
+                    if let Err(e) = out.send(bytes) {
+                        first_err.get_or_insert(e);
+                    }
+                });
+                first_err
+            })
+            .map_err(EngineError::Spawn)?;
+
+        let (graph_tx, graph_rx) = mpsc::channel();
+        let watcher = match reload {
+            Some((path, build)) => match reload::watch(path, build, graph_tx) {
+                Ok(w) => Some(w),
+                Err(e) => {
+                    abort_scheduler(&control_tx, scheduler);
+                    return Err(e.into());
+                }
+            },
+            None => None,
+        };
+
         let stop = Arc::new(AtomicBool::new(false));
-        let started = Instant::now();
+        let dropped = Arc::new(AtomicU64::new(0));
+        let state = CallbackState {
+            pipeline: Pipeline::new(root),
+            feeder: RefCell::new(Feeder {
+                ring: ring_tx,
+                seq: 0,
+                dropped: Arc::clone(&dropped),
+                scheduler: scheduler.thread().clone(),
+            }),
+            graphs: graph_rx,
+        };
         let flag = Arc::clone(&stop);
         let input = miditool_io::open_input_with(
             input,
-            move |_stamp, bytes, owned: &mut Owned| {
+            move |_stamp, bytes, state: &mut CallbackState| {
                 if flag.load(Ordering::Relaxed) {
                     return;
                 }
-                let (pipeline, out) = owned;
-                let now_ns = started.elapsed().as_nanos() as Timestamp;
-                pipeline.handle(now_ns, bytes, &mut |b| {
-                    // Nowhere to report a failed send from the MIDI thread.
-                    let _ = out.send(b);
-                });
+                let CallbackState {
+                    pipeline,
+                    feeder,
+                    graphs,
+                } = state;
+                let now = now_ns(epoch);
+                // Install any pending reload before processing, so this
+                // event is the first the new graph sees. try_recv on an
+                // empty channel is one atomic load: hot-path cheap.
+                while let Ok(root) = graphs.try_recv() {
+                    pipeline.swap_graph(now, root, &mut |ev| feeder.borrow_mut().event(ev));
+                }
+                pipeline.handle(
+                    now,
+                    bytes,
+                    &mut |ev| feeder.borrow_mut().event(ev),
+                    &mut |b| feeder.borrow_mut().raw(b),
+                );
+                feeder.borrow().wake();
             },
-            (pipeline, out),
-        )?;
+            state,
+        );
+        let input = match input {
+            Ok(input) => input,
+            Err(e) => {
+                abort_scheduler(&control_tx, scheduler);
+                return Err(e.into());
+            }
+        };
         Ok(Engine {
             input: Some(input),
+            scheduler: Some(scheduler),
+            controls: control_tx,
             stop,
-            started,
+            epoch,
+            dropped,
+            _watcher: watcher,
         })
     }
 
@@ -182,25 +243,49 @@ impl Engine {
         self.wind_down()
     }
 
+    /// Emergency stop: drop everything pending and silence all channels,
+    /// including All Notes Off, All Sound Off, and Reset All Controllers
+    /// on all 16. The engine keeps running.
+    pub fn panic_now(&self) {
+        let _ = self.controls.send(Control::Panic);
+        if let Some(handle) = &self.scheduler {
+            handle.thread().unpark();
+        }
+    }
+
+    /// Events dropped because the scheduler's ring was full. Diagnostic;
+    /// anything above zero means sustained overload.
+    pub fn dropped_events(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
     /// Shared teardown for [`Engine::stop`] and `Drop`. Idempotent.
     fn wind_down(&mut self) -> Result<(), EngineError> {
         let Some(input) = self.input.take() else {
             return Ok(());
         };
-        // Stop feeding the pipeline, then disconnect. `close` blocks until
-        // the callback cannot run again, so we own the state exclusively.
+        // Stop the watcher first so no swap arrives mid-teardown, stop
+        // feeding the pipeline, then disconnect. `close` blocks until the
+        // callback cannot run again, making the ring's producer side
+        // exclusively ours.
+        self._watcher = None;
         self.stop.store(true, Ordering::Relaxed);
-        let (mut pipeline, mut out) = input.close();
-        let now_ns = self.started.elapsed().as_nanos() as Timestamp;
-        let mut first_err: Option<IoError> = None;
-        pipeline.shutdown(now_ns, &mut |b| {
-            if let Err(e) = out.send(b) {
-                first_err.get_or_insert(e);
-            }
-        });
-        match first_err {
-            Some(e) => Err(e.into()),
-            None => Ok(()),
+        let CallbackState {
+            mut pipeline,
+            feeder,
+            ..
+        } = input.close();
+        let mut feeder = feeder.into_inner();
+        pipeline.shutdown(now_ns(self.epoch), &mut |ev| feeder.event(ev));
+        let _ = self.controls.send(Control::Shutdown);
+        feeder.wake();
+        let Some(handle) = self.scheduler.take() else {
+            return Ok(());
+        };
+        match handle.join() {
+            Ok(Some(e)) => Err(e.into()),
+            Ok(None) => Ok(()),
+            Err(_) => Err(EngineError::SchedulerPanicked),
         }
     }
 }
@@ -211,116 +296,9 @@ impl Drop for Engine {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use miditool_core::graph::{Effect, Pass};
-
-    fn pass() -> Pipeline {
-        Pipeline::new(Node::Leaf(Box::new(Pass)))
-    }
-
-    /// Feed packets through `handle` and collect each sent message.
-    fn feed(p: &mut Pipeline, packets: &[&[u8]]) -> Vec<Vec<u8>> {
-        let mut sent = Vec::new();
-        for (i, packet) in packets.iter().enumerate() {
-            p.handle(i as Timestamp, packet, &mut |b| sent.push(b.to_vec()));
-        }
-        sent
-    }
-
-    #[test]
-    fn note_round_trip() {
-        let mut p = pass();
-        let sent = feed(&mut p, &[&[0x90, 60, 100], &[0x80, 60, 0]]);
-        assert_eq!(sent, vec![vec![0x90, 60, 100], vec![0x80, 60, 0]]);
-    }
-
-    #[test]
-    fn running_status_reencodes_full_messages() {
-        let mut p = pass();
-        let sent = feed(&mut p, &[&[0x90, 60, 100, 62, 90]]);
-        assert_eq!(sent, vec![vec![0x90, 60, 100], vec![0x90, 62, 90]]);
-    }
-
-    #[test]
-    fn shutdown_releases_hanging_note() {
-        let mut p = pass();
-        feed(&mut p, &[&[0x90, 60, 100]]);
-        let mut sent = Vec::new();
-        p.shutdown(1, &mut |b| sent.push(b.to_vec()));
-        assert!(sent.contains(&vec![0x80, 60, 0]));
-    }
-
-    #[test]
-    fn shutdown_after_balanced_notes_sends_nothing() {
-        let mut p = pass();
-        feed(&mut p, &[&[0x90, 60, 100], &[0x80, 60, 0]]);
-        let mut sent = Vec::new();
-        p.shutdown(1, &mut |b| sent.push(b.to_vec()));
-        assert!(sent.is_empty());
-    }
-
-    #[test]
-    fn shutdown_flushes_effects_before_silencing() {
-        /// Holds every note-on and releases it only on flush.
-        struct Hold(Vec<Event>);
-        impl Effect for Hold {
-            fn process(&mut self, ev: &Event, out: &mut EventBuf, _cx: &ProcCx) {
-                if matches!(ev.kind, EventKind::NoteOn { .. }) {
-                    self.0.push(*ev);
-                    out.push(*ev);
-                }
-            }
-            fn flush(&mut self, out: &mut EventBuf, _cx: &ProcCx) {
-                for ev in self.0.drain(..) {
-                    if let EventKind::NoteOn { ch, key, .. } = ev.kind {
-                        out.push(Event::new(ev.time, EventKind::NoteOff { ch, key, vel: 0 }));
-                    }
-                }
-            }
-        }
-        let mut p = Pipeline::new(Node::Leaf(Box::new(Hold(Vec::new()))));
-        feed(&mut p, &[&[0x91, 72, 100]]);
-        let mut sent = Vec::new();
-        p.shutdown(1, &mut |b| sent.push(b.to_vec()));
-        // The flush's note-off both goes out and settles the tracker, so
-        // the note-off appears exactly once.
-        assert_eq!(sent, vec![vec![0x81, 72, 0]]);
-    }
-
-    #[test]
-    fn panic_emits_channel_mode_messages_on_all_channels() {
-        let mut p = pass();
-        feed(&mut p, &[&[0x90, 60, 100]]);
-        let mut sent = Vec::new();
-        p.panic(1, &mut |b| sent.push(b.to_vec()));
-        assert!(sent.contains(&vec![0x80, 60, 0]));
-        for ch in 0..16u8 {
-            for cc in [123, 120, 121] {
-                assert!(sent.contains(&vec![0xB0 | ch, cc, 0]));
-            }
-        }
-    }
-
-    #[test]
-    fn sysex_passes_through_verbatim() {
-        let mut p = pass();
-        let sent = feed(&mut p, &[&[0xF0, 1, 2, 3, 0xF7]]);
-        assert_eq!(sent, vec![vec![0xF0, 1, 2, 3, 0xF7]]);
-    }
-
-    #[test]
-    fn realtime_passes_through_verbatim() {
-        let mut p = pass();
-        let sent = feed(&mut p, &[&[0xF8]]);
-        assert_eq!(sent, vec![vec![0xF8]]);
-    }
-
-    #[test]
-    fn realtime_interleaved_in_a_note_packet() {
-        let mut p = pass();
-        let sent = feed(&mut p, &[&[0x90, 60, 0xF8, 100]]);
-        assert_eq!(sent, vec![vec![0xF8], vec![0x90, 60, 100]]);
-    }
+/// Tear down a scheduler thread that never got an engine around it.
+fn abort_scheduler(controls: &mpsc::Sender<Control>, handle: JoinHandle<Option<IoError>>) {
+    let _ = controls.send(Control::Shutdown);
+    handle.thread().unpark();
+    let _ = handle.join();
 }

@@ -23,9 +23,13 @@ miditool-engine = { path = "crates/engine" }
 miditool-config = { path = "crates/config" }
 
 arrayvec = "0.7"
+audio_thread_priority = "0.35"
+notify = "8"
+notify-debouncer-full = "0.7"
 rand = { version = "0.9", default-features = false }
 rand_pcg = "0.9"
 rand_distr = { version = "0.5", default-features = false }
+rtrb = "0.3"
 midir = "0.11"
 knus = "3.4"
 miette = { version = "7", features = ["fancy"] }

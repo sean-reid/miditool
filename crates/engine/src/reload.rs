@@ -1,23 +1,26 @@
-//! Hot reload: watch the config file and rebuild the graph off the hot
-//! path.
+//! Hot reload: watch the config file, re-parse the scenes, and rebuild
+//! the active scene's graph off the hot path.
 //!
 //! Editors commonly save by writing a temporary file and renaming it over
 //! the original, so the watch is on the parent directory, filtered by the
 //! config's file name, with a debounce to coalesce the flurry each save
-//! produces. A successful build is handed to the MIDI callback thread
-//! over a channel; a failed build is reported to stderr and the running
-//! graph is kept, so a broken edit never kills a performance.
+//! produces. On a successful re-parse the active scene is carried across
+//! the edit by name (an edit may reorder scenes), falling back to scene 0
+//! when it disappeared; its rebuilt graph is handed to the MIDI callback
+//! thread over a channel and the shared scene table is updated. Any
+//! failure is reported to stderr and leaves the running state alone, so a
+//! broken edit never kills a performance.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use miditool_core::Node;
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 
-use crate::BuildGraph;
+use crate::handle::{BuildScene, ReloadScenes, SceneState, lock};
 
 /// How long a save's burst of file events is coalesced before rebuilding.
 const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -25,12 +28,14 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 /// The live watcher; dropping it stops the watch thread.
 pub(crate) type Watcher = Debouncer<RecommendedWatcher, RecommendedCache>;
 
-/// Watch `path` and, on each debounced change, run `build` and send the
-/// new graph down `graphs`. Building happens on the watcher's own thread,
-/// never the MIDI thread.
+/// Watch `path` and, on each debounced change, re-parse the scenes and
+/// rebuild the active graph. Everything happens on the watcher's own
+/// thread, never the MIDI thread.
 pub(crate) fn watch(
     path: PathBuf,
-    build: BuildGraph,
+    reload: ReloadScenes,
+    build: Arc<BuildScene>,
+    scenes: Arc<Mutex<SceneState>>,
     graphs: mpsc::Sender<Node>,
 ) -> Result<Watcher, notify::Error> {
     let file_name: OsString = path
@@ -54,17 +59,143 @@ pub(crate) fn watch(
         let touched = events
             .iter()
             .any(|e| e.paths.iter().any(|p| p.file_name() == Some(&file_name)));
-        if !touched {
-            return;
-        }
-        match build() {
-            // A closed receiver just means the engine already stopped.
-            Ok(root) => {
-                let _ = graphs.send(root);
-            }
-            Err(e) => eprintln!("miditool: config reload failed, keeping current graph: {e}"),
+        if touched {
+            apply(&reload, &build, &scenes, &graphs);
         }
     })?;
     debouncer.watch(&dir, RecursiveMode::NonRecursive)?;
     Ok(debouncer)
+}
+
+/// One debounced config change: re-parse, rebuild the active scene
+/// (matched by name, falling back to scene 0), swap the graph in, and
+/// publish the new scene table. Errors keep the running state as-is.
+fn apply(
+    reload: &ReloadScenes,
+    build: &BuildScene,
+    scenes: &Mutex<SceneState>,
+    graphs: &mpsc::Sender<Node>,
+) {
+    let new_defs = match reload() {
+        Ok(defs) => defs,
+        Err(e) => {
+            eprintln!("miditool: config reload failed, keeping current scenes: {e}");
+            return;
+        }
+    };
+    if new_defs.is_empty() {
+        eprintln!("miditool: config reload produced no scenes, keeping current scenes");
+        return;
+    }
+    let mut state = lock(scenes);
+    let idx = state
+        .defs
+        .get(state.active)
+        .and_then(|active| new_defs.iter().position(|d| d.name == active.name))
+        .unwrap_or(0);
+    match build(idx) {
+        Ok(root) => {
+            // A closed receiver just means the engine already stopped.
+            let _ = graphs.send(root);
+            state.defs = new_defs;
+            state.active = idx;
+        }
+        Err(e) => eprintln!("miditool: scene rebuild failed, keeping current scenes: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SceneDef;
+    use miditool_core::graph::Pass;
+
+    fn def(name: &str, kill: bool) -> SceneDef {
+        SceneDef {
+            name: name.into(),
+            kill_on_exit: kill,
+        }
+    }
+
+    /// A build closure that records the scene indices it was asked for.
+    fn recording_build() -> (Arc<Mutex<Vec<usize>>>, BuildScene) {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&calls);
+        let build: BuildScene = Box::new(move |i| {
+            seen.lock().unwrap().push(i);
+            Ok(Node::Leaf(Box::new(Pass)))
+        });
+        (calls, build)
+    }
+
+    #[test]
+    fn reload_follows_the_active_scene_by_name() {
+        let (calls, build) = recording_build();
+        let new = vec![def("a", false), def("x", false), def("b", true)];
+        let expected = new.clone();
+        let reload: ReloadScenes = Box::new(move || Ok(new.clone()));
+        let scenes = Mutex::new(SceneState {
+            defs: vec![def("a", false), def("b", false)],
+            active: 1,
+        });
+        let (tx, rx) = mpsc::channel();
+        apply(&reload, &build, &scenes, &tx);
+        // "b" moved from index 1 to index 2: its graph is the one rebuilt
+        // and swapped in, and the table follows it there.
+        assert_eq!(*calls.lock().unwrap(), vec![2]);
+        assert!(rx.try_recv().is_ok());
+        let state = scenes.lock().unwrap();
+        assert_eq!(state.active, 2);
+        assert_eq!(state.defs, expected);
+    }
+
+    #[test]
+    fn reload_falls_back_to_scene_zero_when_the_active_scene_disappears() {
+        let (calls, build) = recording_build();
+        let reload: ReloadScenes = Box::new(|| Ok(vec![def("x", false), def("y", false)]));
+        let scenes = Mutex::new(SceneState {
+            defs: vec![def("a", false), def("b", false)],
+            active: 1,
+        });
+        let (tx, rx) = mpsc::channel();
+        apply(&reload, &build, &scenes, &tx);
+        assert_eq!(*calls.lock().unwrap(), vec![0]);
+        assert!(rx.try_recv().is_ok());
+        let state = scenes.lock().unwrap();
+        assert_eq!(state.active, 0);
+        assert_eq!(state.defs, vec![def("x", false), def("y", false)]);
+    }
+
+    #[test]
+    fn a_failed_reload_keeps_the_scene_state() {
+        let (calls, build) = recording_build();
+        let reload: ReloadScenes = Box::new(|| Err("parse error".into()));
+        let scenes = Mutex::new(SceneState {
+            defs: vec![def("a", false)],
+            active: 0,
+        });
+        let (tx, rx) = mpsc::channel();
+        apply(&reload, &build, &scenes, &tx);
+        assert!(calls.lock().unwrap().is_empty());
+        assert!(rx.try_recv().is_err());
+        let state = scenes.lock().unwrap();
+        assert_eq!(state.active, 0);
+        assert_eq!(state.defs, vec![def("a", false)]);
+    }
+
+    #[test]
+    fn a_failed_rebuild_keeps_the_scene_state() {
+        let build: BuildScene = Box::new(|_| Err("bad graph".into()));
+        let reload: ReloadScenes = Box::new(|| Ok(vec![def("a", true), def("b", false)]));
+        let scenes = Mutex::new(SceneState {
+            defs: vec![def("a", false)],
+            active: 0,
+        });
+        let (tx, rx) = mpsc::channel();
+        apply(&reload, &build, &scenes, &tx);
+        assert!(rx.try_recv().is_err());
+        let state = scenes.lock().unwrap();
+        assert_eq!(state.active, 0);
+        assert_eq!(state.defs, vec![def("a", false)]);
+    }
 }

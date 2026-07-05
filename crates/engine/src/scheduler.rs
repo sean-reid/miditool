@@ -11,9 +11,17 @@
 //! Timing: the thread parks until roughly half a millisecond before the
 //! next deadline (interruptible by unpark when new work arrives), then
 //! spins the final stretch for sub-millisecond accuracy.
+//!
+//! The sent-event tap: once a monitor takes the consumer end, every
+//! channel event dispatched here is mirrored, stamped with its send
+//! moment, into a second fixed-size ring. The push is wait-free and
+//! best-effort: a full ring drops the copy rather than delay the send,
+//! and raw or SysEx passthrough bytes never appear.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,6 +32,10 @@ use miditool_core::{Event, EventBuf, EventKind, NoteTracker, Timestamp, wire};
 /// Ring capacity in messages. Generous: at the MIDI wire's own pace this
 /// is several seconds of dense traffic.
 pub(crate) const RING_CAPACITY: usize = 4096;
+
+/// Tap ring capacity in events. Plenty for a monitor polling at frame
+/// rate; when nobody listens the ring is never touched.
+pub(crate) const TAP_CAPACITY: usize = 1024;
 
 /// How close to a deadline parking hands over to spinning.
 const SPIN_NS: u64 = 500_000;
@@ -49,6 +61,29 @@ pub(crate) enum Control {
     Shutdown,
     /// Drop everything pending and silence hard; keep running.
     Panic,
+    /// Scene kill: drop everything pending and send the note-offs (plus
+    /// pedal-ups) that stop what is sounding, without the channel-mode
+    /// sweep of [`Control::Panic`]; keep running.
+    Silence,
+}
+
+/// The producer half of the sent-event tap, created alongside the engine
+/// and enabled when [`crate::EngineHandle::take_tap`] hands out the
+/// consumer end.
+pub(crate) struct Tap {
+    pub(crate) ring: rtrb::Producer<Event>,
+    pub(crate) enabled: Arc<AtomicBool>,
+}
+
+impl Tap {
+    /// Mirror one sent channel event to the monitor, if one is listening.
+    /// Wait-free and allocation-free either way: disabled costs one
+    /// relaxed load, and a full ring drops the copy rather than block.
+    fn push(&mut self, time: Timestamp, kind: EventKind) {
+        if self.enabled.load(Ordering::Relaxed) {
+            let _ = self.ring.push(Event::new(time, kind));
+        }
+    }
 }
 
 /// Nanoseconds since the engine's shared epoch.
@@ -91,6 +126,9 @@ impl Ord for Scheduled {
 pub(crate) struct SchedulerCore {
     heap: BinaryHeap<Reverse<Scheduled>>,
     tracker: NoteTracker,
+    /// `None` only in tests; the engine always wires a tap, listened to
+    /// or not, so the disabled hot path costs one predictable branch.
+    tap: Option<Tap>,
 }
 
 impl SchedulerCore {
@@ -100,6 +138,7 @@ impl SchedulerCore {
             // allocates if more than a whole ring's worth is pending.
             heap: BinaryHeap::with_capacity(2 * RING_CAPACITY),
             tracker: NoteTracker::new(),
+            tap: None,
         }
     }
 
@@ -112,16 +151,25 @@ impl SchedulerCore {
         self.heap.peek().map(|Reverse(s)| s.time)
     }
 
+    /// Encode and send one channel event, keeping the tracker current and
+    /// mirroring the event to the tap when a monitor is listening.
+    fn dispatch(&mut self, time: Timestamp, kind: EventKind, send: &mut impl FnMut(&[u8])) {
+        let mut buf = [0u8; 3];
+        send(wire::encode(&kind, &mut buf));
+        self.tracker.observe(&kind);
+        if let Some(tap) = &mut self.tap {
+            tap.push(time, kind);
+        }
+    }
+
     /// Send every event whose time has come.
     pub(crate) fn send_due(&mut self, now: Timestamp, send: &mut impl FnMut(&[u8])) {
-        let mut buf = [0u8; 3];
         while let Some(Reverse(next)) = self.heap.peek() {
             if next.time > now {
                 break;
             }
             let Reverse(s) = self.heap.pop().expect("peeked entry");
-            send(wire::encode(&s.kind, &mut buf));
-            self.tracker.observe(&s.kind);
+            self.dispatch(now, s.kind, send);
         }
     }
 
@@ -129,37 +177,43 @@ impl SchedulerCore {
     /// nothing the tracker has seen keeps sounding, other pending events
     /// are dropped, and the tracker silences whatever remains.
     pub(crate) fn shutdown(&mut self, now: Timestamp, send: &mut impl FnMut(&[u8])) {
-        let mut buf = [0u8; 3];
         while let Some(Reverse(s)) = self.heap.pop() {
             if matches!(s.kind, EventKind::NoteOff { .. }) {
-                send(wire::encode(&s.kind, &mut buf));
-                self.tracker.observe(&s.kind);
+                self.dispatch(now, s.kind, send);
             }
         }
         self.silence(now, send);
     }
 
-    /// Emergency stop: drop everything pending, silence the tracker, then
-    /// send All Notes Off, All Sound Off, and Reset All Controllers on all
-    /// 16 channels for anything the tracker could not know about.
-    pub(crate) fn panic(&mut self, now: Timestamp, send: &mut impl FnMut(&[u8])) {
-        let mut buf = [0u8; 3];
+    /// Scene kill: drop everything pending and send the note-offs (plus
+    /// pedal-ups) that stop what is sounding. [`SchedulerCore::panic`]
+    /// minus the channel-mode sweep, leaving the DAW's controller state
+    /// alone; the loop keeps running.
+    pub(crate) fn kill(&mut self, now: Timestamp, send: &mut impl FnMut(&[u8])) {
         self.heap.clear();
         self.silence(now, send);
+    }
+
+    /// Emergency stop: a kill plus All Notes Off, All Sound Off, and
+    /// Reset All Controllers on all 16 channels for anything the tracker
+    /// could not know about.
+    pub(crate) fn panic(&mut self, now: Timestamp, send: &mut impl FnMut(&[u8])) {
+        self.kill(now, send);
         for ch in 0..16 {
             for cc in [CC_ALL_NOTES_OFF, CC_ALL_SOUND_OFF, CC_RESET_CONTROLLERS] {
-                let kind = EventKind::ControlChange { ch, cc, value: 0 };
-                send(wire::encode(&kind, &mut buf));
+                self.dispatch(now, EventKind::ControlChange { ch, cc, value: 0 }, send);
             }
         }
     }
 
+    /// Silence everything the tracker has seen sounding. The note-offs go
+    /// through [`SchedulerCore::dispatch`] like any other send, so the tap
+    /// sees them too; re-observing them is a no-op on the reset tracker.
     fn silence(&mut self, now: Timestamp, send: &mut impl FnMut(&[u8])) {
-        let mut buf = [0u8; 3];
         let mut out = EventBuf::new();
         self.tracker.silence(now, &mut out);
         for e in &out {
-            send(wire::encode(&e.kind, &mut buf));
+            self.dispatch(e.time, e.kind, send);
         }
     }
 }
@@ -170,9 +224,11 @@ pub(crate) fn scheduler_loop(
     epoch: Instant,
     mut ring: rtrb::Consumer<Msg>,
     controls: mpsc::Receiver<Control>,
+    tap: Tap,
     send: &mut impl FnMut(&[u8]),
 ) {
     let mut core = SchedulerCore::new();
+    core.tap = Some(tap);
     loop {
         match controls.try_recv() {
             Ok(Control::Shutdown) => {
@@ -186,6 +242,11 @@ pub(crate) fn scheduler_loop(
                 // Whatever was queued before the panic dies with it.
                 while ring.pop().is_ok() {}
                 core.panic(now_ns(epoch), send);
+            }
+            Ok(Control::Silence) => {
+                // A scene kill: output queued before the switch dies too.
+                while ring.pop().is_ok() {}
+                core.kill(now_ns(epoch), send);
             }
             Err(_) => {}
         }
@@ -354,32 +415,85 @@ mod tests {
         assert_eq!(core.tracker.active(), 0);
     }
 
-    /// Spawn `scheduler_loop` against channels, returning handles plus a
-    /// receiver of (send time, bytes) pairs.
-    #[allow(clippy::type_complexity)]
-    fn spawn_loop(
-        epoch: Instant,
-    ) -> (
-        rtrb::Producer<Msg>,
-        mpsc::Sender<Control>,
-        mpsc::Receiver<(Timestamp, Vec<u8>)>,
-        thread::JoinHandle<()>,
-    ) {
+    #[test]
+    fn kill_silences_and_drops_pending_without_the_sweep() {
+        let mut core = SchedulerCore::new();
+        core.schedule(0, 0, on(60));
+        let mut sent = Vec::new();
+        core.send_due(0, &mut |b| sent.push(b.to_vec()));
+        core.schedule(10 * MS, 1, off(60));
+        core.schedule(20 * MS, 2, on(61));
+        sent.clear();
+        core.kill(MS, &mut |b| sent.push(b.to_vec()));
+        // The sounding note is silenced by the tracker, both pending
+        // events are dropped, and no channel-mode sweep goes out.
+        assert_eq!(sent, vec![off_bytes(60)]);
+        assert_eq!(core.next_deadline(), None);
+        assert_eq!(core.tracker.active(), 0);
+    }
+
+    /// A running `scheduler_loop` and everything a test needs to poke it:
+    /// the ring producer, the control channel, a receiver of (send time,
+    /// bytes) pairs, and the tap's consumer end plus its enable flag.
+    struct LoopRig {
+        prod: rtrb::Producer<Msg>,
+        ctl: mpsc::Sender<Control>,
+        out: mpsc::Receiver<(Timestamp, Vec<u8>)>,
+        handle: thread::JoinHandle<()>,
+        tap: rtrb::Consumer<Event>,
+        tap_on: Arc<AtomicBool>,
+    }
+
+    fn spawn_loop(epoch: Instant, tap_capacity: usize) -> LoopRig {
         let (prod, cons) = rtrb::RingBuffer::new(64);
         let (ctl_tx, ctl_rx) = mpsc::channel();
         let (out_tx, out_rx) = mpsc::channel();
+        let (tap_tx, tap_rx) = rtrb::RingBuffer::new(tap_capacity);
+        let tap_on = Arc::new(AtomicBool::new(false));
+        let tap = Tap {
+            ring: tap_tx,
+            enabled: Arc::clone(&tap_on),
+        };
         let handle = thread::spawn(move || {
-            scheduler_loop(epoch, cons, ctl_rx, &mut |b| {
+            scheduler_loop(epoch, cons, ctl_rx, tap, &mut |b| {
                 out_tx.send((now_ns(epoch), b.to_vec())).unwrap();
             });
         });
-        (prod, ctl_tx, out_rx, handle)
+        LoopRig {
+            prod,
+            ctl: ctl_tx,
+            out: out_rx,
+            handle,
+            tap: tap_rx,
+            tap_on,
+        }
+    }
+
+    /// Poll `out` until `n` sends arrive or a generous deadline passes;
+    /// fixed sleeps flake on loaded CI runners.
+    fn wait_sends(
+        out: &mpsc::Receiver<(Timestamp, Vec<u8>)>,
+        n: usize,
+    ) -> Vec<(Timestamp, Vec<u8>)> {
+        let mut got = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while got.len() < n && Instant::now() < deadline {
+            got.extend(out.try_iter());
+            thread::sleep(Duration::from_millis(1));
+        }
+        got
     }
 
     #[test]
     fn loop_sends_at_deadlines_in_order() {
         let epoch = Instant::now();
-        let (mut prod, ctl, out, handle) = spawn_loop(epoch);
+        let LoopRig {
+            mut prod,
+            ctl,
+            out,
+            handle,
+            ..
+        } = spawn_loop(epoch, 16);
         let t0 = now_ns(epoch);
         let plan = [(0, on(60)), (30 * MS, off(60)), (10 * MS, on(62))];
         for (i, (dt, kind)) in plan.into_iter().enumerate() {
@@ -387,15 +501,9 @@ mod tests {
             prod.push(Msg::Event { seq: i as u64, ev }).unwrap();
         }
         handle.thread().unpark();
-        // Wait for all three scheduled sends before shutting down; a fixed
-        // sleep flakes on loaded CI runners, where the thread can stall
-        // past the shutdown-drops-pending-note-ons path.
-        let mut sent: Vec<(u64, Vec<u8>)> = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while sent.len() < 3 && Instant::now() < deadline {
-            sent.extend(out.try_iter());
-            thread::sleep(Duration::from_millis(1));
-        }
+        // Wait for all three scheduled sends before shutting down, lest a
+        // stalled thread hit the shutdown-drops-pending-note-ons path.
+        let mut sent = wait_sends(&out, 3);
         ctl.send(Control::Shutdown).unwrap();
         handle.thread().unpark();
         handle.join().unwrap();
@@ -423,7 +531,13 @@ mod tests {
     #[test]
     fn raw_and_sysex_bypass_the_heap() {
         let epoch = Instant::now();
-        let (mut prod, ctl, out, handle) = spawn_loop(epoch);
+        let LoopRig {
+            mut prod,
+            ctl,
+            out,
+            handle,
+            ..
+        } = spawn_loop(epoch, 16);
         // Far enough out that no CI stall can make it due before shutdown.
         let future = Event::new(now_ns(epoch) + 60_000 * MS, on(60));
         prod.push(Msg::Event { seq: 0, ev: future }).unwrap();
@@ -434,14 +548,7 @@ mod tests {
         .unwrap();
         prod.push(Msg::Sysex(Box::new([0xF0, 1, 2, 0xF7]))).unwrap();
         handle.thread().unpark();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut seen = 0;
-        let mut early: Vec<(u64, Vec<u8>)> = Vec::new();
-        while seen < 2 && Instant::now() < deadline {
-            early.extend(out.try_iter());
-            seen = early.len();
-            thread::sleep(Duration::from_millis(1));
-        }
+        let early = wait_sends(&out, 2);
         ctl.send(Control::Shutdown).unwrap();
         handle.thread().unpark();
         handle.join().unwrap();
@@ -453,5 +560,116 @@ mod tests {
             .chain(out.try_iter().map(|(_, b)| b))
             .collect();
         assert_eq!(bytes, vec![vec![0xF8], vec![0xF0, 1, 2, 0xF7]]);
+    }
+
+    #[test]
+    fn tap_mirrors_sent_channel_events() {
+        let epoch = Instant::now();
+        let mut rig = spawn_loop(epoch, 16);
+        rig.tap_on.store(true, Ordering::Relaxed);
+        let t0 = now_ns(epoch);
+        rig.prod
+            .push(Msg::Event {
+                seq: 0,
+                ev: Event::new(t0, on(60)),
+            })
+            .unwrap();
+        rig.handle.thread().unpark();
+        assert_eq!(wait_sends(&rig.out, 1).len(), 1);
+        rig.ctl.send(Control::Shutdown).unwrap();
+        rig.handle.thread().unpark();
+        rig.handle.join().unwrap();
+        // The shutdown silence for the hanging note is a sent channel
+        // event too, so it follows the note-on onto the tap.
+        let tapped: Vec<Event> = std::iter::from_fn(|| rig.tap.pop().ok()).collect();
+        let kinds: Vec<_> = tapped.iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, vec![on(60), off(60)]);
+        // Send-time stamps: never before the engine saw the event.
+        for e in &tapped {
+            assert!(e.time >= t0, "tapped event stamped before its push");
+        }
+    }
+
+    #[test]
+    fn tap_overflow_drops_extra_events_without_blocking() {
+        let epoch = Instant::now();
+        let mut rig = spawn_loop(epoch, 4);
+        rig.tap_on.store(true, Ordering::Relaxed);
+        let t0 = now_ns(epoch);
+        // Balanced pairs so shutdown has nothing to add.
+        let plan = [
+            on(60),
+            off(60),
+            on(61),
+            off(61),
+            on(62),
+            off(62),
+            on(63),
+            off(63),
+        ];
+        for (i, kind) in plan.into_iter().enumerate() {
+            rig.prod
+                .push(Msg::Event {
+                    seq: i as u64,
+                    ev: Event::new(t0, kind),
+                })
+                .unwrap();
+        }
+        rig.handle.thread().unpark();
+        // Every event still goes out the port even though the tap ring
+        // only holds four of them.
+        let sent = wait_sends(&rig.out, 8);
+        rig.ctl.send(Control::Shutdown).unwrap();
+        rig.handle.thread().unpark();
+        rig.handle.join().unwrap();
+        assert_eq!(sent.len(), 8);
+        let tapped: Vec<_> = std::iter::from_fn(|| rig.tap.pop().ok())
+            .map(|e| e.kind)
+            .collect();
+        assert_eq!(tapped, vec![on(60), off(60), on(61), off(61)]);
+    }
+
+    #[test]
+    fn raw_bytes_and_a_disabled_tap_stay_off_the_tap() {
+        let epoch = Instant::now();
+        let mut rig = spawn_loop(epoch, 16);
+        let t0 = now_ns(epoch);
+        // Sent while nobody listens: never tapped.
+        rig.prod
+            .push(Msg::Event {
+                seq: 0,
+                ev: Event::new(t0, on(60)),
+            })
+            .unwrap();
+        rig.handle.thread().unpark();
+        assert_eq!(wait_sends(&rig.out, 1).len(), 1);
+        // With the tap enabled, raw and SysEx passthrough still bypass it.
+        rig.tap_on.store(true, Ordering::Relaxed);
+        rig.prod
+            .push(Msg::Raw {
+                len: 1,
+                bytes: [0xF8, 0, 0],
+            })
+            .unwrap();
+        rig.prod
+            .push(Msg::Sysex(Box::new([0xF0, 1, 0xF7])))
+            .unwrap();
+        rig.prod
+            .push(Msg::Event {
+                seq: 1,
+                ev: Event::new(now_ns(epoch), on(61)),
+            })
+            .unwrap();
+        rig.handle.thread().unpark();
+        assert_eq!(wait_sends(&rig.out, 3).len(), 3);
+        rig.ctl.send(Control::Shutdown).unwrap();
+        rig.handle.thread().unpark();
+        rig.handle.join().unwrap();
+        // Only channel events sent after the take appear: on(61), then the
+        // shutdown silence for both hanging notes, in tracker order.
+        let tapped: Vec<_> = std::iter::from_fn(|| rig.tap.pop().ok())
+            .map(|e| e.kind)
+            .collect();
+        assert_eq!(tapped, vec![on(61), off(60), off(61)]);
     }
 }

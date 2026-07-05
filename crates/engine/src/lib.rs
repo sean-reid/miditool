@@ -14,18 +14,22 @@
 //! - The scheduler thread (owns the output and the note tracker): fed by
 //!   a lock-free SPSC ring, woken by unpark, promoted to realtime
 //!   priority when the OS allows it.
+//! - [`EngineHandle`]: the cold-path control surface a UI or web remote
+//!   drives, switching between named [`SceneDef`] graphs live, with a
+//!   panic button and a best-effort tap of every sent event.
 //! - [`Engine`]: the wiring, plus optional config-file watching that
-//!   rebuilds and swaps the graph without interrupting playing.
+//!   re-parses the scenes and swaps the active scene's graph without
+//!   interrupting playing.
 
+mod handle;
 mod pipeline;
 mod reload;
 mod scheduler;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle, Thread};
 use std::time::Instant;
 
@@ -34,13 +38,11 @@ use miditool_core::{Event, Node};
 use miditool_io::{Input, IoError, OutputTarget};
 use thiserror::Error;
 
+pub use handle::{BuildScene, EngineHandle, ReloadScenes, SceneDef};
 pub use pipeline::{MAX_DRAINING, Pipeline};
 
-use scheduler::{Control, Msg, RING_CAPACITY, now_ns, scheduler_loop};
-
-/// Builds a fresh graph from the current config, called on the watcher
-/// thread for every debounced change.
-pub type BuildGraph = Box<dyn Fn() -> Result<Node, String> + Send>;
+use handle::SceneState;
+use scheduler::{Control, Msg, RING_CAPACITY, TAP_CAPACITY, Tap, now_ns, scheduler_loop};
 
 /// Errors from engine setup and teardown. The per-event path reports
 /// nothing: a failed send mid-stream has no one to tell, though the first
@@ -55,6 +57,8 @@ pub enum EngineError {
     Spawn(std::io::Error),
     #[error("the scheduler thread panicked")]
     SchedulerPanicked,
+    #[error("scene setup: {0}")]
+    Scene(String),
 }
 
 /// The callback's single-producer handle to the scheduler: the ring, the
@@ -118,36 +122,54 @@ pub struct Engine {
     controls: mpsc::Sender<Control>,
     stop: Arc<AtomicBool>,
     epoch: Instant,
-    dropped: Arc<AtomicU64>,
     _watcher: Option<reload::Watcher>,
 }
 
 impl Engine {
     /// Open the output, start the scheduler thread, build a pipeline
-    /// around `root`, and connect it to the chosen input port. Processing
-    /// starts immediately on the backend's MIDI thread.
+    /// around scene 0's graph, and connect it to the chosen input port.
+    /// Processing starts immediately on the backend's MIDI thread.
     ///
     /// `input` selects the source port as in [`miditool_io::open_input`]:
-    /// a case-insensitive substring, or `None` to auto-pick.
+    /// a case-insensitive substring, or `None` to auto-pick. `scenes`
+    /// must be non-empty and names the graphs `build` can produce; the
+    /// returned [`EngineHandle`] switches between them live.
     ///
-    /// With `reload` set to `Some((config_path, builder))`, the config
-    /// file is watched and each change rebuilds the graph off the hot
-    /// path, swapping it in on the next incoming MIDI event (an idle rig
-    /// applies the swap when the next event arrives, which is exactly
-    /// when it can first matter). Build errors go to stderr and leave the
-    /// running graph in place: a broken edit must never kill a
-    /// performance.
+    /// With `reload` set to `Some((config_path, reload_scenes))`, the
+    /// config file is watched and each change re-parses it and rebuilds
+    /// the active scene's graph off the hot path (carried across the edit
+    /// by name, falling back to scene 0), swapping it in on the next
+    /// incoming MIDI event (an idle rig applies the swap when the next
+    /// event arrives, which is exactly when it can first matter). Reload
+    /// errors go to stderr and leave the running scenes in place: a
+    /// broken edit must never kill a performance.
     pub fn run(
         input: Option<&str>,
         output: &OutputTarget,
-        root: Node,
-        reload: Option<(PathBuf, BuildGraph)>,
-    ) -> Result<Engine, EngineError> {
+        scenes: Vec<SceneDef>,
+        build: BuildScene,
+        reload: Option<(PathBuf, ReloadScenes)>,
+    ) -> Result<(Engine, EngineHandle), EngineError> {
+        if scenes.is_empty() {
+            return Err(EngineError::Scene("no scenes defined".into()));
+        }
+        let root = build(0).map_err(EngineError::Scene)?;
+        let build: Arc<BuildScene> = Arc::new(build);
+
         let mut out = miditool_io::open_output(output)?;
         let epoch = Instant::now();
 
         let (ring_tx, ring_rx) = rtrb::RingBuffer::new(RING_CAPACITY);
         let (control_tx, control_rx) = mpsc::channel();
+        // The tap pair exists whether or not anyone ever listens; the
+        // producer side stays a single predictable branch until
+        // [`EngineHandle::take_tap`] flips it live.
+        let (tap_tx, tap_rx) = rtrb::RingBuffer::new(TAP_CAPACITY);
+        let tap_enabled = Arc::new(AtomicBool::new(false));
+        let tap = Tap {
+            ring: tap_tx,
+            enabled: Arc::clone(&tap_enabled),
+        };
         let scheduler = thread::Builder::new()
             .name("miditool scheduler".into())
             .spawn(move || {
@@ -158,7 +180,7 @@ impl Engine {
                     eprintln!("miditool: scheduler thread runs without realtime priority: {e:?}");
                 }
                 let mut first_err: Option<IoError> = None;
-                scheduler_loop(epoch, ring_rx, control_rx, &mut |bytes| {
+                scheduler_loop(epoch, ring_rx, control_rx, tap, &mut |bytes| {
                     if let Err(e) = out.send(bytes) {
                         first_err.get_or_insert(e);
                     }
@@ -168,14 +190,27 @@ impl Engine {
             .map_err(EngineError::Spawn)?;
 
         let (graph_tx, graph_rx) = mpsc::channel();
+        let shared = Arc::new(Mutex::new(SceneState {
+            defs: scenes,
+            active: 0,
+        }));
         let watcher = match reload {
-            Some((path, build)) => match reload::watch(path, build, graph_tx) {
-                Ok(w) => Some(w),
-                Err(e) => {
-                    abort_scheduler(&control_tx, scheduler);
-                    return Err(e.into());
+            Some((path, reload_scenes)) => {
+                let watch = reload::watch(
+                    path,
+                    reload_scenes,
+                    Arc::clone(&build),
+                    Arc::clone(&shared),
+                    graph_tx.clone(),
+                );
+                match watch {
+                    Ok(w) => Some(w),
+                    Err(e) => {
+                        abort_scheduler(&control_tx, scheduler);
+                        return Err(e.into());
+                    }
                 }
-            },
+            }
             None => None,
         };
 
@@ -227,36 +262,30 @@ impl Engine {
                 return Err(e.into());
             }
         };
-        Ok(Engine {
+        let handle = EngineHandle {
+            scenes: shared,
+            build,
+            controls: control_tx.clone(),
+            graphs: graph_tx,
+            scheduler: scheduler.thread().clone(),
+            dropped,
+            tap: Arc::new(Mutex::new(Some(tap_rx))),
+            tap_enabled,
+        };
+        let engine = Engine {
             input: Some(input),
             scheduler: Some(scheduler),
             controls: control_tx,
             stop,
             epoch,
-            dropped,
             _watcher: watcher,
-        })
+        };
+        Ok((engine, handle))
     }
 
     /// Stop processing, flush all effects, and silence hanging notes.
     pub fn stop(mut self) -> Result<(), EngineError> {
         self.wind_down()
-    }
-
-    /// Emergency stop: drop everything pending and silence all channels,
-    /// including All Notes Off, All Sound Off, and Reset All Controllers
-    /// on all 16. The engine keeps running.
-    pub fn panic_now(&self) {
-        let _ = self.controls.send(Control::Panic);
-        if let Some(handle) = &self.scheduler {
-            handle.thread().unpark();
-        }
-    }
-
-    /// Events dropped because the scheduler's ring was full. Diagnostic;
-    /// anything above zero means sustained overload.
-    pub fn dropped_events(&self) -> u64 {
-        self.dropped.load(Ordering::Relaxed)
     }
 
     /// Shared teardown for [`Engine::stop`] and `Drop`. Idempotent.

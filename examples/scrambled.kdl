@@ -5,6 +5,8 @@
 // velocity curve keeps the dynamics playable.
 
 input "Roland"                       // optional: substring of the input port name
+                                     // add hide=true to hide the raw keyboard from
+                                     // other apps while running (macOS; GarageBand fix)
 output virtual="miditool Out"        // default if omitted; or: output device="IAC"
 
 shuffle-lock seed=42 lo=21 hi=108 mode="free"

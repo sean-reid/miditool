@@ -30,6 +30,10 @@ pub struct Config {
     /// Substring to match against input port names; `None` means prompt
     /// or pick a default.
     pub input: Option<String>,
+    /// Hide the raw input source from other apps while running, so a DAW
+    /// that listens to every port (GarageBand) hears only the output.
+    /// macOS only; ignored elsewhere.
+    pub hide_input: bool,
     /// Where processed events go.
     pub output: OutputSpec,
     /// Top-level effects, run in series.

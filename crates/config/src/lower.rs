@@ -34,7 +34,8 @@ pub(crate) fn document(doc: ast::Document) -> Result<Config, ConfigError> {
         },
     };
     Ok(Config {
-        input: doc.input,
+        input: doc.input.as_ref().map(|i| i.name.clone()),
+        hide_input: doc.input.as_ref().and_then(|i| i.hide).unwrap_or(false),
         output,
         chain: effects(doc.effects)?,
     })

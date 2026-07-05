@@ -36,6 +36,19 @@ enum Cmd {
     },
     /// List the built-in effects and their parameters.
     Effects,
+    /// Hide a MIDI source from other apps until Ctrl-C (macOS only).
+    /// Useful for testing; `run` does this itself when the config says
+    /// `input "..." hide=true`.
+    Hide {
+        /// Substring of the source name.
+        name: String,
+    },
+    /// Restore sources hidden by a crashed run (macOS only).
+    Unhide {
+        /// Substring of the source name; restores every source when
+        /// omitted.
+        name: Option<String>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -47,7 +60,45 @@ fn main() -> anyhow::Result<()> {
             print!("{}", pretty::EFFECTS_HELP);
             Ok(())
         }
+        Cmd::Hide { name } => hide(name),
+        Cmd::Unhide { name } => unhide(name),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn hide(name: String) -> anyhow::Result<()> {
+    let hidden = miditool_io::hide::hide_source(&name)?;
+    eprintln!(
+        "{} is hidden from other apps; restart any app that was already \
+         listening. Ctrl-C to restore.",
+        hidden.name()
+    );
+    wait_for_interrupt()?;
+    hidden.restore()?;
+    eprintln!("\nrestored.");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn unhide(name: Option<String>) -> anyhow::Result<()> {
+    let touched = miditool_io::hide::unhide_sources(name.as_deref())?;
+    if touched.is_empty() {
+        eprintln!("no matching sources found.");
+    }
+    for name in touched {
+        println!("restored {name}");
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn hide(_name: String) -> anyhow::Result<()> {
+    bail!("hiding MIDI sources is a CoreMIDI feature; macOS only");
+}
+
+#[cfg(not(target_os = "macos"))]
+fn unhide(_name: Option<String>) -> anyhow::Result<()> {
+    bail!("hiding MIDI sources is a CoreMIDI feature; macOS only");
 }
 
 fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
@@ -65,6 +116,29 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     let engine = miditool_engine::Engine::run(cfg.input.as_deref(), &target, root)
         .context("failed to start the engine")?;
 
+    // Hide only after the engine has connected: existing connections keep
+    // receiving from a hidden source.
+    #[cfg(target_os = "macos")]
+    let hidden = if cfg.hide_input {
+        let name = cfg
+            .input
+            .as_deref()
+            .expect("hide=true lives on the input node");
+        let hidden = miditool_io::hide::hide_source(name)?;
+        eprintln!(
+            "{} is hidden from other apps; restart any app that was \
+             already listening to it.",
+            hidden.name()
+        );
+        Some(hidden)
+    } else {
+        None
+    };
+    #[cfg(not(target_os = "macos"))]
+    if cfg.hide_input {
+        eprintln!("note: `hide=true` is a CoreMIDI feature; ignored on this platform.");
+    }
+
     let out_name = match &target {
         miditool_io::OutputTarget::Virtual(name) => format!("{name} (virtual)"),
         miditool_io::OutputTarget::Device(name) => name.clone(),
@@ -74,6 +148,10 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
 
     wait_for_interrupt()?;
     eprintln!("\nwinding down: releasing held notes.");
+    #[cfg(target_os = "macos")]
+    if let Some(hidden) = hidden {
+        hidden.restore().context("failed to unhide the input")?;
+    }
     engine.stop().context("engine wind-down failed")?;
     Ok(())
 }

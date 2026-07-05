@@ -30,11 +30,21 @@ Point your DAW at the `miditool Out` port and play.
 
 ### The GarageBand problem
 
-GarageBand listens to every MIDI source at once, so it will hear both your raw keyboard and miditool's output. Options:
+GarageBand listens to every MIDI source at once, so out of the box it hears both your raw keyboard and miditool's output. On macOS, miditool solves this directly: mark the input with `hide=true`
 
-- Use a DAW with per-track MIDI input selection (Logic Pro, Reaper, Ableton, Cubase) and pick `miditool Out`.
-- Run miditool on a Raspberry Pi between the keyboard and the computer, so the computer only ever sees one device. Setup guide coming with a later release.
-- On macOS there is a promising trick to hide the raw keyboard from other apps while miditool keeps reading it; see `spikes/hidekb.swift`. It will be built into miditool once verified.
+```kdl
+input "Roland" hide=true
+```
+
+and while miditool runs, the raw keyboard is hidden from every other app; GarageBand sees only `miditool Out`. Start miditool before the DAW (or restart the DAW once). Visibility is restored when miditool exits; if a run is ever killed hard, `miditool unhide` puts things back.
+
+Elsewhere, or if you prefer not to hide the port, use a DAW with per-track MIDI input selection (Logic Pro, Reaper, Ableton, Cubase) and pick `miditool Out`. A Raspberry Pi middle-box mode, where the computer only ever sees one device, is planned for a later release.
+
+## Platforms
+
+- macOS: CoreMIDI, virtual output ports, input hiding.
+- Linux (including Raspberry Pi): ALSA, virtual output ports.
+- Windows: WinMM. Windows has no native virtual MIDI ports; install loopMIDI, create a port there, and point `output device="loopMIDI"` at it.
 
 ## Effects
 

@@ -20,6 +20,7 @@ fn scrambled_example_parses_exactly() {
         config,
         Config {
             input: Some("Roland".to_owned()),
+            hide_input: false,
             output: OutputSpec::Virtual("miditool Out".to_owned()),
             chain: vec![
                 EffectSpec::ShuffleLock {
@@ -45,6 +46,7 @@ fn split_fork_example_parses_exactly() {
         config,
         Config {
             input: Some("Arturia".to_owned()),
+            hide_input: false,
             output: OutputSpec::Device("IAC Driver".to_owned()),
             chain: vec![
                 EffectSpec::OnlyChannels(vec![0]),
@@ -103,10 +105,18 @@ fn empty_document_is_a_valid_config() {
         config,
         Config {
             input: None,
+            hide_input: false,
             output: OutputSpec::Virtual("miditool Out".to_owned()),
             chain: vec![],
         }
     );
+}
+
+#[test]
+fn input_hide_property() {
+    let config = parse("input \"Roland\" hide=true");
+    assert_eq!(config.input.as_deref(), Some("Roland"));
+    assert!(config.hide_input);
 }
 
 #[test]

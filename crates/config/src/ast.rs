@@ -9,15 +9,25 @@
 /// wherever they appear; every other top-level node must be an effect.
 #[derive(Debug, knus::Decode)]
 pub(crate) struct Document {
-    /// `input "<substring>"`
-    #[knus(child, unwrap(argument))]
-    pub input: Option<String>,
+    /// `input "<substring>" hide=#true`
+    #[knus(child)]
+    pub input: Option<Input>,
     /// `output virtual="Name"` or `output device="substring"`
     #[knus(child)]
     pub output: Option<Output>,
     /// The implicit top-level chain.
     #[knus(children)]
     pub effects: Vec<Effect>,
+}
+
+/// The `input` node: a port name substring, and optionally `hide=#true`
+/// to hide the raw source from other apps while miditool runs (macOS).
+#[derive(Debug, knus::Decode)]
+pub(crate) struct Input {
+    #[knus(argument)]
+    pub name: String,
+    #[knus(property)]
+    pub hide: Option<bool>,
 }
 
 /// The `output` node. Exactly one of the two properties must be present;

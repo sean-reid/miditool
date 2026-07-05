@@ -9,7 +9,7 @@ input "Roland"
 output virtual="miditool Echoes"
 
 tempo 96                             // beats= times below follow this
-remote port=8320                     // switch scenes from a browser
+remote port=8320 bind="0.0.0.0"      // switch scenes from a phone; drop bind= to stay local-only
 
 // Every note trails off in fading repeats, and notes you hold down get
 // gently re-struck on a loose two-second pulse.

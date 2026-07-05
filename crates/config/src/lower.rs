@@ -2,8 +2,12 @@
 //! types: defaults filled in, ranges checked, channels rebased from the
 //! human 1-16 to the wire 0-15.
 
+use std::net::IpAddr;
+
 use crate::ast;
-use crate::{Config, ConfigError, EffectSpec, OutputSpec, SceneSpec, ShuffleMode, TimeSpec};
+use crate::{
+    Config, ConfigError, EffectSpec, OutputSpec, RemoteSpec, SceneSpec, ShuffleMode, TimeSpec,
+};
 
 /// Output port name used when the config has no `output` node.
 const DEFAULT_OUTPUT: &str = "miditool Out";
@@ -13,6 +17,15 @@ const MAIN_SCENE: &str = "main";
 
 /// Tempo used when the config has no `tempo` node.
 const DEFAULT_TEMPO: f32 = 120.0;
+
+/// Address the web remote binds when the `remote` node has no `bind=`:
+/// loopback, so turning the remote on does not expose it to the network.
+const DEFAULT_BIND: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+
+/// How deep `chain`/`fork` blocks may nest. The graph is compiled and
+/// walked recursively, so unbounded nesting could overflow the stack;
+/// real configs stay in single digits.
+const MAX_EFFECT_DEPTH: usize = 64;
 
 /// Default key range for the randomizing effects: A0..=C8, the 88 keys of
 /// a piano.
@@ -44,23 +57,36 @@ pub(crate) fn document(doc: ast::Document) -> Result<Config, ConfigError> {
         hide_input: doc.input.as_ref().and_then(|i| i.hide).unwrap_or(false),
         output,
         tempo: tempo(doc.tempo)?,
-        remote_port: remote(doc.remote)?,
+        remote: remote(doc.remote)?,
         scenes: scenes(doc.scenes, doc.effects)?,
     })
 }
 
-fn remote(node: Option<ast::Remote>) -> Result<Option<u16>, ConfigError> {
-    let Some(ast::Remote { port }) = node else {
+fn remote(node: Option<ast::Remote>) -> Result<Option<RemoteSpec>, ConfigError> {
+    let Some(ast::Remote { port, bind }) = node else {
         return Ok(None);
     };
-    if (1..=65535).contains(&port) {
-        Ok(Some(port as u16))
-    } else {
-        Err(ConfigError::invalid(
+    if !(1..=65535).contains(&port) {
+        return Err(ConfigError::invalid(
             "remote",
             format!("port must be within 1..=65535, got {port}"),
-        ))
+        ));
     }
+    let bind = match bind {
+        None => DEFAULT_BIND,
+        Some(text) => text.parse().map_err(|_| {
+            ConfigError::invalid(
+                "remote",
+                format!(
+                    "bind must be an IP address like \"127.0.0.1\" or \"0.0.0.0\", got \"{text}\""
+                ),
+            )
+        })?,
+    };
+    Ok(Some(RemoteSpec {
+        port: port as u16,
+        bind,
+    }))
 }
 
 fn scenes(
@@ -149,14 +175,24 @@ fn tempo(node: Option<ast::Tempo>) -> Result<f32, ConfigError> {
 }
 
 fn effects(nodes: Vec<ast::Effect>) -> Result<Vec<EffectSpec>, ConfigError> {
-    nodes.into_iter().map(effect).collect()
+    effects_at(nodes, 0)
 }
 
-fn effect(node: ast::Effect) -> Result<EffectSpec, ConfigError> {
+fn effects_at(nodes: Vec<ast::Effect>, depth: usize) -> Result<Vec<EffectSpec>, ConfigError> {
+    nodes.into_iter().map(|node| effect(node, depth)).collect()
+}
+
+fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
     use ast::Effect as E;
     Ok(match node {
-        E::Chain { children } => EffectSpec::Chain(effects(children)?),
-        E::Fork { children } => EffectSpec::Fork(effects(children)?),
+        E::Chain { children } => {
+            nesting("chain", depth)?;
+            EffectSpec::Chain(effects_at(children, depth + 1)?)
+        }
+        E::Fork { children } => {
+            nesting("fork", depth)?;
+            EffectSpec::Fork(effects_at(children, depth + 1)?)
+        }
         E::Pass => EffectSpec::Pass,
         E::Discard => EffectSpec::Discard,
         E::Transpose { semis } => {
@@ -326,6 +362,18 @@ fn effect(node: ast::Effect) -> Result<EffectSpec, ConfigError> {
             }
         }
     })
+}
+
+/// Reject a `chain`/`fork` block nested past [`MAX_EFFECT_DEPTH`].
+fn nesting(node: &'static str, depth: usize) -> Result<(), ConfigError> {
+    if depth < MAX_EFFECT_DEPTH {
+        Ok(())
+    } else {
+        Err(ConfigError::invalid(
+            node,
+            format!("effects nest deeper than the limit of {MAX_EFFECT_DEPTH} levels"),
+        ))
+    }
 }
 
 /// Resolve a time-valued parameter given as either a duration string

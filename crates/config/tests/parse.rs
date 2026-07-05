@@ -1,8 +1,10 @@
 //! End-to-end tests for the public parsing API: the shipped examples, the
 //! documented defaults, and the validation errors.
 
+use std::net::{IpAddr, Ipv4Addr};
+
 use miditool_config::{
-    Config, EffectSpec, OutputSpec, SceneSpec, ShuffleMode, TimeSpec, parse_str,
+    Config, EffectSpec, OutputSpec, RemoteSpec, SceneSpec, ShuffleMode, TimeSpec, parse_str,
 };
 
 fn parse(text: &str) -> Config {
@@ -45,7 +47,7 @@ fn scrambled_example_parses_exactly() {
             hide_input: false,
             output: OutputSpec::Virtual("miditool Out".to_owned()),
             tempo: 120.0,
-            remote_port: None,
+            remote: None,
             scenes: main_scene(vec![
                 EffectSpec::ShuffleLock {
                     seed: 42,
@@ -73,7 +75,7 @@ fn split_fork_example_parses_exactly() {
             hide_input: false,
             output: OutputSpec::Device("IAC Driver".to_owned()),
             tempo: 120.0,
-            remote_port: None,
+            remote: None,
             scenes: main_scene(vec![
                 EffectSpec::OnlyChannels(vec![0]),
                 EffectSpec::Fork(vec![
@@ -124,7 +126,10 @@ fn echoes_example_parses_exactly() {
             hide_input: false,
             output: OutputSpec::Virtual("miditool Echoes".to_owned()),
             tempo: 96.0,
-            remote_port: Some(8320),
+            remote: Some(RemoteSpec {
+                port: 8320,
+                bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            }),
             scenes: vec![
                 SceneSpec {
                     name: "echoes".to_owned(),
@@ -191,7 +196,7 @@ fn empty_document_is_a_valid_config() {
             hide_input: false,
             output: OutputSpec::Virtual("miditool Out".to_owned()),
             tempo: 120.0,
-            remote_port: None,
+            remote: None,
             scenes: main_scene(vec![]),
         }
     );
@@ -323,12 +328,54 @@ fn mixing_bare_effects_and_scenes_is_rejected() {
 #[test]
 fn remote_node_parses() {
     let config = parse("remote port=8320\npass");
-    assert_eq!(config.remote_port, Some(8320));
+    assert_eq!(
+        config.remote,
+        Some(RemoteSpec {
+            port: 8320,
+            bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        })
+    );
 }
 
 #[test]
 fn remote_defaults_to_off() {
-    assert_eq!(parse("pass").remote_port, None);
+    assert_eq!(parse("pass").remote, None);
+}
+
+#[test]
+fn remote_bind_defaults_to_loopback() {
+    let config = parse("remote port=8320");
+    assert_eq!(config.remote.unwrap().bind, IpAddr::V4(Ipv4Addr::LOCALHOST));
+}
+
+#[test]
+fn remote_bind_all_interfaces() {
+    let config = parse("remote port=8320 bind=\"0.0.0.0\"");
+    assert_eq!(
+        config.remote,
+        Some(RemoteSpec {
+            port: 8320,
+            bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+        })
+    );
+}
+
+#[test]
+fn remote_bind_accepts_a_specific_address() {
+    let config = parse("remote port=8320 bind=\"192.168.1.20\"");
+    assert_eq!(
+        config.remote.unwrap().bind,
+        IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20))
+    );
+}
+
+#[test]
+fn remote_bad_bind_is_rejected() {
+    let msg = parse_err("remote port=8320 bind=\"the-network\"");
+    assert!(
+        msg.contains("remote") && msg.contains("the-network") && msg.contains("0.0.0.0"),
+        "error should name the node, the value, and an example: {msg}"
+    );
 }
 
 #[test]
@@ -477,6 +524,50 @@ fn fork_of_chains_of_filters_round_trips() {
             EffectSpec::Pass,
         ])]
     );
+}
+
+/// `depth` nested containers around a single `pass`.
+fn nested(node: &str, depth: usize) -> String {
+    let mut text = String::new();
+    for _ in 0..depth {
+        text.push_str(node);
+        text.push_str(" {\n");
+    }
+    text.push_str("pass\n");
+    for _ in 0..depth {
+        text.push_str("}\n");
+    }
+    text
+}
+
+#[test]
+fn moderate_nesting_is_fine() {
+    let chain = parse_chain(&nested("chain", 10));
+    assert!(matches!(chain[0], EffectSpec::Chain(_)));
+}
+
+#[test]
+fn nesting_past_the_limit_is_rejected() {
+    // An explicit stack size: the raw KDL parser needs more than the
+    // harness's default test-thread stack at this depth in debug builds,
+    // and this test is about the limit, not the harness.
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let msg = parse_err(&nested("chain", 65));
+            assert!(
+                msg.contains("chain") && msg.contains("64"),
+                "error should name the node and the limit: {msg}"
+            );
+            let msg = parse_err(&nested("fork", 65));
+            assert!(
+                msg.contains("fork") && msg.contains("64"),
+                "the limit covers forks too: {msg}"
+            );
+        })
+        .expect("spawn")
+        .join()
+        .expect("deep nesting should be rejected, not overflow");
 }
 
 #[test]

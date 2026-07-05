@@ -50,7 +50,8 @@ impl Backend for StubBackend {
 
 fn start() -> (Server, Arc<StubBackend>) {
     let backend = Arc::new(StubBackend::default());
-    let server = Server::start(0, Arc::clone(&backend) as Arc<dyn Backend>)
+    let addr = (std::net::Ipv4Addr::LOCALHOST, 0).into();
+    let server = Server::start(addr, Arc::clone(&backend) as Arc<dyn Backend>)
         .expect("server should bind an ephemeral port");
     (server, backend)
 }

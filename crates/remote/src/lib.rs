@@ -31,6 +31,7 @@
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -50,12 +51,17 @@ const DRAIN_INTERVAL: Duration = Duration::from_millis(33);
 /// starts losing frames rather than blocking anyone else.
 const BROADCAST_CAPACITY: usize = 256;
 
+/// WebSocket clients allowed at once. Way beyond any music stand, but a
+/// ceiling keeps a misbehaving peer from piling up connections until the
+/// process runs out of descriptors.
+const MAX_CLIENTS: usize = 256;
+
 const INDEX_HTML: &str = include_str!("../ui/index.html");
 const APP_JS: &str = include_str!("../ui/app.js");
 const STYLE_CSS: &str = include_str!("../ui/style.css");
 
 /// One monitor entry, already humanized by the backend.
-#[derive(Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct MonitorEvent {
     /// Engine time of the send, milliseconds.
     pub t_ms: u64,
@@ -70,7 +76,7 @@ pub struct MonitorEvent {
 /// A snapshot of what the remote shows above the monitor: the scene
 /// list, which scene is live, and how many monitor events the backend
 /// had to drop.
-#[derive(Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct Status {
     /// Scene names, in switcher order.
     pub scenes: Vec<String>,
@@ -93,6 +99,13 @@ pub trait Backend: Send + Sync + 'static {
     fn panic(&self);
     /// Drain whatever accumulated since the last call (called ~30 Hz).
     fn drain_events(&self) -> Vec<MonitorEvent>;
+    /// Throw away whatever accumulated, without formatting it. Called at
+    /// the same ~30 Hz while no client is connected, so the backend's
+    /// buffer never silently fills. The default drains and drops; hosts
+    /// with a cheaper raw path should override it.
+    fn discard_events(&self) {
+        let _ = self.drain_events();
+    }
 }
 
 /// The running HTTP/WebSocket server. Binds on construction, serves
@@ -104,14 +117,15 @@ pub struct Server {
 }
 
 impl Server {
-    /// Binds `0.0.0.0:port` (port 0 picks a free one), spawns its own
-    /// tokio runtime on a background thread, and serves until the
-    /// returned `Server` is dropped.
+    /// Binds `addr` (port 0 picks a free one), spawns its own tokio
+    /// runtime on a background thread, and serves until the returned
+    /// `Server` is dropped. Bind loopback to keep the remote on this
+    /// machine; bind `0.0.0.0` to open it to the local network.
     ///
     /// Binding happens synchronously so an occupied port fails here,
     /// not later on the server thread.
-    pub fn start(port: u16, backend: Arc<dyn Backend>) -> io::Result<Server> {
-        let listener = std::net::TcpListener::bind(("0.0.0.0", port))?;
+    pub fn start(addr: SocketAddr, backend: Arc<dyn Backend>) -> io::Result<Server> {
+        let listener = std::net::TcpListener::bind(addr)?;
         // axum's acceptor drives the listener with the tokio reactor.
         listener.set_nonblocking(true)?;
         let addr = listener.local_addr()?;
@@ -143,11 +157,13 @@ impl Drop for Server {
     }
 }
 
-/// Everything the handlers share: the host backend and the one channel
-/// that fans frames out to every connected client.
+/// Everything the handlers share: the host backend, the one channel that
+/// fans frames out to every connected client, and the in-flight client
+/// count that enforces [`MAX_CLIENTS`].
 struct AppState {
     backend: Arc<dyn Backend>,
     tx: broadcast::Sender<String>,
+    clients: AtomicUsize,
 }
 
 /// Server-to-client frames. Internal tagging puts `"type"` alongside the
@@ -173,7 +189,9 @@ fn serve(
     backend: Arc<dyn Backend>,
     shutdown: oneshot::Receiver<()>,
 ) {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    // A handful of light connections on a control surface: one thread is
+    // plenty, and it keeps the runtime off the process's other cores.
+    let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("failed to build the remote's tokio runtime");
@@ -181,7 +199,11 @@ fn serve(
         let listener = tokio::net::TcpListener::from_std(listener)
             .expect("failed to register the remote's listener with tokio");
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-        let state = Arc::new(AppState { backend, tx });
+        let state = Arc::new(AppState {
+            backend,
+            tx,
+            clients: AtomicUsize::new(0),
+        });
         tokio::spawn(drain_loop(Arc::clone(&state)));
         let app = router(state);
         let result = axum::serve(listener, app)
@@ -227,19 +249,59 @@ async fn drain_loop(state: Arc<AppState>) {
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
         tick.tick().await;
+        // With no one watching, skip the humanize-and-serialize work but
+        // still empty the backend's buffer so it cannot silently fill.
+        if state.tx.receiver_count() == 0 {
+            state.backend.discard_events();
+            continue;
+        }
         let events = state.backend.drain_events();
         if events.is_empty() {
             continue;
         }
         let frame = serde_json::to_string(&Push::Events { events })
             .expect("monitor events always serialize");
-        // Err just means nobody is connected right now.
+        // Err just means everybody disconnected since the count above.
         let _ = state.tx.send(frame);
     }
 }
 
 async fn ws_upgrade(ws: WebSocketUpgrade, State(state): State<Arc<AppState>>) -> Response {
-    ws.on_upgrade(move |socket| client(socket, state))
+    // Take a slot before upgrading; the guard gives it back when the
+    // client task ends, or right here when the house is full.
+    let slot = ClientSlot::take(Arc::clone(&state));
+    if slot.is_none() {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "too many clients\n",
+        )
+            .into_response();
+    }
+    ws.on_upgrade(move |socket| async move {
+        let _slot = slot;
+        client(socket, state).await;
+    })
+}
+
+/// A held connection slot; dropping it releases the count.
+struct ClientSlot(Arc<AppState>);
+
+impl ClientSlot {
+    fn take(state: Arc<AppState>) -> Option<ClientSlot> {
+        state
+            .clients
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < MAX_CLIENTS).then_some(n + 1)
+            })
+            .ok()
+            .map(|_| ClientSlot(state))
+    }
+}
+
+impl Drop for ClientSlot {
+    fn drop(&mut self) {
+        self.0.clients.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 /// One connected client: forward broadcast frames out, accept commands

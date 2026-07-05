@@ -25,7 +25,9 @@ fn main() -> std::io::Result<()> {
     let backend = Arc::new(DevBackend::new());
     let feeder = Arc::clone(&backend);
     thread::spawn(move || synthesize(&feeder));
-    let server = Server::start(port, backend)?;
+    // All interfaces, so the e2e suite and phones on the LAN can reach it.
+    let addr = (std::net::Ipv4Addr::UNSPECIFIED, port).into();
+    let server = Server::start(addr, backend)?;
     println!("dev remote at http://{}", server.addr());
     loop {
         thread::sleep(Duration::from_secs(3600));

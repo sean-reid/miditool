@@ -14,10 +14,11 @@
 //! Effects can instead be grouped into named `scene` blocks, each carrying
 //! its own chain; bare effects lower to a single scene named "main". The
 //! two styles do not mix. An optional `remote` node opens the phone/tablet
-//! web remote for switching scenes:
+//! web remote for switching scenes; it binds loopback unless `bind=` says
+//! otherwise:
 //!
 //! ```kdl
-//! remote port=8320
+//! remote port=8320 bind="0.0.0.0"
 //!
 //! scene "scrambled" {
 //!     shuffle-lock seed=42
@@ -55,12 +56,25 @@ pub struct Config {
     /// Beats per minute, from the top-level `tempo` node; resolves the
     /// `beats=` form of [`TimeSpec`]. Defaults to 120.
     pub tempo: f32,
-    /// Port for the phone/tablet web remote, from the top-level `remote`
-    /// node; `None` leaves the remote off.
-    pub remote_port: Option<u16>,
+    /// The phone/tablet web remote, from the top-level `remote` node;
+    /// `None` leaves the remote off.
+    pub remote: Option<RemoteSpec>,
     /// The scenes, in file order; always at least one. Bare top-level
     /// effects lower to a single scene named "main".
     pub scenes: Vec<SceneSpec>,
+}
+
+/// The web remote's listen address, from the `remote` node.
+///
+/// The default bind is loopback, so the remote is reachable only from
+/// the machine running miditool; `bind="0.0.0.0"` opens it to the local
+/// network for a phone or tablet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteSpec {
+    /// TCP port to serve on, `1..=65535`.
+    pub port: u16,
+    /// Address to bind; defaults to `127.0.0.1`.
+    pub bind: std::net::IpAddr,
 }
 
 /// One named scene: a chain of effects, and what happens to sounding

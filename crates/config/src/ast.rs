@@ -58,12 +58,16 @@ pub(crate) struct Tempo {
     pub bpm: Number,
 }
 
-/// The `remote` node: a TCP port for the phone/tablet web remote. The
-/// port stays wide here; [`crate::lower`] range-checks it into a `u16`.
+/// The `remote` node: a TCP port for the phone/tablet web remote, and
+/// optionally the address to bind. The port stays wide and the bind stays
+/// a string here; [`crate::lower`] range-checks the port into a `u16` and
+/// parses the bind into an `IpAddr`.
 #[derive(Debug, knus::Decode)]
 pub(crate) struct Remote {
     #[knus(property)]
     pub port: i64,
+    #[knus(property)]
+    pub bind: Option<String>,
 }
 
 /// A `scene` node: a name, an optional `switch=` behavior, and the

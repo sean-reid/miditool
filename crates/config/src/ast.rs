@@ -388,6 +388,100 @@ pub(crate) enum Effect {
         #[knus(property)]
         sieve: Option<String>,
     },
+    EuclideanGate {
+        #[knus(property)]
+        k: i64,
+        #[knus(property)]
+        n: i64,
+        #[knus(property)]
+        rotation: Option<i64>,
+        #[knus(property)]
+        pulse: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        mode: Option<String>,
+    },
+    Quantize {
+        #[knus(property)]
+        grid: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        strength: Option<Number>,
+    },
+    Talea {
+        #[knus(arguments)]
+        durations: Vec<Number>,
+        #[knus(property)]
+        beats: Option<bool>,
+    },
+    AddedValue {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        unit: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        extend: Option<Number>,
+        #[knus(property)]
+        defer: Option<Number>,
+    },
+    AccentGroups {
+        #[knus(arguments)]
+        groups: Vec<i64>,
+        #[knus(property)]
+        accent: Option<i64>,
+        #[knus(property)]
+        rest: Option<i64>,
+    },
+    FeldmanField {
+        #[knus(property)]
+        seed: Option<u64>,
+        #[knus(property)]
+        floor: Option<i64>,
+        #[knus(property)]
+        ceiling: Option<i64>,
+        #[knus(property)]
+        jitter: Option<i64>,
+    },
+    VelocityInvert {
+        #[knus(property)]
+        pivot: Option<i64>,
+    },
+    VelocityRouter {
+        #[knus(property)]
+        low: Option<i64>,
+        #[knus(property)]
+        high: Option<i64>,
+        #[knus(property)]
+        soft: i64,
+        #[knus(property)]
+        medium: i64,
+        #[knus(property)]
+        loud: i64,
+    },
+    AntiAccent {
+        #[knus(property)]
+        seed: Option<u64>,
+        #[knus(property)]
+        level: Option<i64>,
+        #[knus(property)]
+        every: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+    },
+    MassCrescendo {
+        #[knus(property)]
+        period: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        depth: Option<Number>,
+        #[knus(property)]
+        shape: Option<String>,
+    },
     Script {
         #[knus(argument)]
         path: String,

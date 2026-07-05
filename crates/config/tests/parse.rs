@@ -4,8 +4,8 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use miditool_config::{
-    ClusterAnchor, ClusterKind, Config, EffectSpec, OutputSpec, RemoteSpec, RowForm, SceneSpec,
-    ShuffleMode, SieveSnap, TimeSpec, parse_str,
+    ClusterAnchor, ClusterKind, Config, CrescendoShape, EffectSpec, OutputSpec, RemoteSpec,
+    RowForm, SceneSpec, ShuffleMode, SieveSnap, TimeSpec, parse_str,
 };
 
 fn parse(text: &str) -> Config {
@@ -2028,6 +2028,558 @@ fn resonance_halo_range_errors() {
     assert!(msg.contains("level") && msg.contains("0..=1"), "{msg}");
     let msg = parse_err("resonance-halo level=-0.1");
     assert!(msg.contains("0..=1"), "lower bound: {msg}");
+}
+
+#[test]
+fn rhythm_example_parses_exactly() {
+    let config = parse(include_str!("../../../examples/rhythm.kdl"));
+    assert_eq!(
+        config,
+        Config {
+            input: Some("Roland".to_owned()),
+            hide_input: false,
+            output: OutputSpec::Virtual("miditool Rhythm".to_owned()),
+            tempo: 100.0,
+            remote: None,
+            scenes: vec![
+                SceneSpec {
+                    name: "tresillo".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::EuclideanGate {
+                            k: 3,
+                            n: 8,
+                            rotation: 0,
+                            pulse: TimeSpec::Beats(0.5),
+                            defer: true,
+                        },
+                        EffectSpec::AccentGroups {
+                            groups: vec![3, 3, 2],
+                            accent: 118,
+                            rest: 72,
+                        },
+                    ],
+                },
+                SceneSpec {
+                    name: "feldman".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::FeldmanField {
+                            seed: 6,
+                            floor: 6,
+                            ceiling: 24,
+                            jitter: 3,
+                        },
+                        EffectSpec::AddedValue {
+                            seed: 11,
+                            unit: TimeSpec::Millis(80.0),
+                            extend: 0.4,
+                            defer: 0.0,
+                        },
+                        EffectSpec::AntiAccent {
+                            seed: 2,
+                            level: 12,
+                            every: TimeSpec::Millis(30000.0),
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+}
+
+#[test]
+fn euclidean_gate_defaults_to_a_deferred_sixteenth_pulse() {
+    assert_eq!(
+        parse_chain("euclidean-gate k=3 n=8"),
+        vec![EffectSpec::EuclideanGate {
+            k: 3,
+            n: 8,
+            rotation: 0,
+            pulse: TimeSpec::Beats(0.25),
+            defer: true,
+        }]
+    );
+}
+
+#[test]
+fn euclidean_gate_full_form() {
+    assert_eq!(
+        parse_chain("euclidean-gate k=5 n=13 rotation=2 pulse=\"125ms\" mode=\"drop\""),
+        vec![EffectSpec::EuclideanGate {
+            k: 5,
+            n: 13,
+            rotation: 2,
+            pulse: TimeSpec::Millis(125.0),
+            defer: false,
+        }]
+    );
+}
+
+#[test]
+fn euclidean_gate_requires_k_and_n() {
+    let msg = parse_err("euclidean-gate n=8");
+    assert!(
+        msg.contains("k"),
+        "error should name the missing property: {msg}"
+    );
+    let msg = parse_err("euclidean-gate k=3");
+    assert!(
+        msg.contains("n"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn euclidean_gate_range_errors() {
+    let msg = parse_err("euclidean-gate k=0 n=8");
+    assert!(
+        msg.contains("euclidean-gate") && msg.contains("k") && msg.contains("1..=64"),
+        "{msg}"
+    );
+    let msg = parse_err("euclidean-gate k=3 n=65");
+    assert!(msg.contains("1..=64") && msg.contains("65"), "{msg}");
+    let msg = parse_err("euclidean-gate k=9 n=8");
+    assert!(msg.contains("k=9"), "k must not exceed n: {msg}");
+    let msg = parse_err("euclidean-gate k=3 n=8 rotation=8");
+    assert!(
+        msg.contains("rotation") && msg.contains("less than n=8"),
+        "rotation stays below n: {msg}"
+    );
+}
+
+#[test]
+fn euclidean_gate_bad_mode_is_rejected() {
+    let msg = parse_err("euclidean-gate k=3 n=8 mode=\"hold\"");
+    assert!(
+        msg.contains("hold") && msg.contains("defer") && msg.contains("drop"),
+        "error should show the bad mode and the alternatives: {msg}"
+    );
+}
+
+#[test]
+fn euclidean_gate_pulse_and_beats_are_mutually_exclusive() {
+    let msg = parse_err("euclidean-gate k=3 n=8 pulse=\"125ms\" beats=0.25");
+    assert!(
+        msg.contains("pulse") && msg.contains("mutually exclusive"),
+        "error should use the node's property name: {msg}"
+    );
+}
+
+#[test]
+fn quantize_defaults_to_a_hard_sixteenth_grid() {
+    assert_eq!(
+        parse_chain("quantize"),
+        vec![EffectSpec::Quantize {
+            grid: TimeSpec::Beats(0.25),
+            strength: 1.0,
+        }]
+    );
+}
+
+#[test]
+fn quantize_full_form() {
+    assert_eq!(
+        parse_chain("quantize grid=\"125ms\" strength=0.5"),
+        vec![EffectSpec::Quantize {
+            grid: TimeSpec::Millis(125.0),
+            strength: 0.5,
+        }]
+    );
+}
+
+#[test]
+fn quantize_strength_out_of_range_is_rejected() {
+    let msg = parse_err("quantize strength=1.5");
+    assert!(
+        msg.contains("quantize") && msg.contains("strength") && msg.contains("0..=1"),
+        "{msg}"
+    );
+    let msg = parse_err("quantize strength=-0.1");
+    assert!(msg.contains("0..=1"), "lower bound: {msg}");
+}
+
+#[test]
+fn talea_entries_are_milliseconds_by_default() {
+    assert_eq!(
+        parse_chain("talea 250 500 250 1000"),
+        vec![EffectSpec::Talea {
+            durations: vec![
+                TimeSpec::Millis(250.0),
+                TimeSpec::Millis(500.0),
+                TimeSpec::Millis(250.0),
+                TimeSpec::Millis(1000.0),
+            ],
+        }]
+    );
+}
+
+#[test]
+fn talea_beats_true_reads_entries_as_beats() {
+    assert_eq!(
+        parse_chain("talea 1 0.5 0.5 2 beats=true"),
+        vec![EffectSpec::Talea {
+            durations: vec![
+                TimeSpec::Beats(1.0),
+                TimeSpec::Beats(0.5),
+                TimeSpec::Beats(0.5),
+                TimeSpec::Beats(2.0),
+            ],
+        }]
+    );
+}
+
+#[test]
+fn talea_requires_one_to_thirty_two_entries() {
+    let msg = parse_err("talea");
+    assert!(
+        msg.contains("talea") && msg.contains("1 and 32") && msg.contains("got 0"),
+        "{msg}"
+    );
+    let many = format!("talea{}", " 250".repeat(33));
+    let msg = parse_err(&many);
+    assert!(msg.contains("1 and 32") && msg.contains("33"), "{msg}");
+}
+
+#[test]
+fn talea_millisecond_entries_out_of_range_name_the_offender() {
+    let msg = parse_err("talea 250 0.5 500");
+    assert!(
+        msg.contains("talea") && msg.contains("1ms..=60s") && msg.contains("0.5ms"),
+        "error should name the offending entry: {msg}"
+    );
+    let msg = parse_err("talea 250 61000");
+    assert!(
+        msg.contains("1ms..=60s") && msg.contains("61000ms"),
+        "upper bound: {msg}"
+    );
+}
+
+#[test]
+fn talea_beat_entries_must_be_positive() {
+    let msg = parse_err("talea 1 0 beats=true");
+    assert!(
+        msg.contains("talea") && msg.contains("greater than 0") && msg.contains("got 0"),
+        "error should name the offending entry: {msg}"
+    );
+}
+
+#[test]
+fn added_value_defaults() {
+    assert_eq!(
+        parse_chain("added-value seed=5"),
+        vec![EffectSpec::AddedValue {
+            seed: 5,
+            unit: TimeSpec::Millis(60.0),
+            extend: 0.3,
+            defer: 0.0,
+        }]
+    );
+}
+
+#[test]
+fn added_value_full_form_with_beats() {
+    assert_eq!(
+        parse_chain("added-value seed=5 beats=0.25 extend=0.5 defer=0.2"),
+        vec![EffectSpec::AddedValue {
+            seed: 5,
+            unit: TimeSpec::Beats(0.25),
+            extend: 0.5,
+            defer: 0.2,
+        }]
+    );
+}
+
+#[test]
+fn added_value_requires_a_seed() {
+    let msg = parse_err("added-value extend=0.5");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn added_value_range_errors() {
+    let msg = parse_err("added-value seed=1 extend=1.5");
+    assert!(
+        msg.contains("added-value") && msg.contains("extend") && msg.contains("0..=1"),
+        "{msg}"
+    );
+    let msg = parse_err("added-value seed=1 defer=-0.1");
+    assert!(msg.contains("defer") && msg.contains("0..=1"), "{msg}");
+}
+
+#[test]
+fn accent_groups_defaults() {
+    assert_eq!(
+        parse_chain("accent-groups 3 5"),
+        vec![EffectSpec::AccentGroups {
+            groups: vec![3, 5],
+            accent: 112,
+            rest: 64,
+        }]
+    );
+}
+
+#[test]
+fn accent_groups_full_form() {
+    assert_eq!(
+        parse_chain("accent-groups 2 2 3 accent=120 rest=50"),
+        vec![EffectSpec::AccentGroups {
+            groups: vec![2, 2, 3],
+            accent: 120,
+            rest: 50,
+        }]
+    );
+}
+
+#[test]
+fn accent_groups_require_at_least_one_group() {
+    let msg = parse_err("accent-groups");
+    assert!(
+        msg.contains("accent-groups") && msg.contains("at least one"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn accent_groups_range_errors() {
+    let msg = parse_err("accent-groups 0 5");
+    assert!(
+        msg.contains("accent-groups") && msg.contains("group") && msg.contains("1..=16"),
+        "{msg}"
+    );
+    let msg = parse_err("accent-groups 3 17");
+    assert!(msg.contains("1..=16") && msg.contains("17"), "{msg}");
+    let msg = parse_err("accent-groups 3 5 accent=128");
+    assert!(msg.contains("accent") && msg.contains("1..=127"), "{msg}");
+    let msg = parse_err("accent-groups 3 5 rest=0");
+    assert!(msg.contains("rest") && msg.contains("1..=127"), "{msg}");
+}
+
+#[test]
+fn feldman_field_defaults() {
+    assert_eq!(
+        parse_chain("feldman-field"),
+        vec![EffectSpec::FeldmanField {
+            seed: 0,
+            floor: 8,
+            ceiling: 28,
+            jitter: 4,
+        }]
+    );
+}
+
+#[test]
+fn feldman_field_full_form() {
+    assert_eq!(
+        parse_chain("feldman-field seed=6 floor=6 ceiling=24 jitter=3"),
+        vec![EffectSpec::FeldmanField {
+            seed: 6,
+            floor: 6,
+            ceiling: 24,
+            jitter: 3,
+        }]
+    );
+}
+
+#[test]
+fn feldman_field_range_errors() {
+    let msg = parse_err("feldman-field floor=0");
+    assert!(
+        msg.contains("feldman-field") && msg.contains("floor") && msg.contains("1..=127"),
+        "{msg}"
+    );
+    let msg = parse_err("feldman-field ceiling=128");
+    assert!(msg.contains("ceiling") && msg.contains("1..=127"), "{msg}");
+    let msg = parse_err("feldman-field floor=30 ceiling=20");
+    assert!(
+        msg.contains("floor=30"),
+        "floor must not exceed ceiling: {msg}"
+    );
+    let msg = parse_err("feldman-field jitter=21");
+    assert!(msg.contains("jitter") && msg.contains("0..=20"), "{msg}");
+}
+
+#[test]
+fn velocity_invert_defaults_to_the_middle_pivot() {
+    assert_eq!(
+        parse_chain("velocity-invert"),
+        vec![EffectSpec::VelocityInvert { pivot: 64 }]
+    );
+}
+
+#[test]
+fn velocity_invert_pivot_out_of_range_is_rejected() {
+    let msg = parse_err("velocity-invert pivot=0");
+    assert!(
+        msg.contains("velocity-invert") && msg.contains("pivot") && msg.contains("1..=127"),
+        "{msg}"
+    );
+    let msg = parse_err("velocity-invert pivot=128");
+    assert!(msg.contains("1..=127") && msg.contains("128"), "{msg}");
+}
+
+#[test]
+fn velocity_router_rebases_channels() {
+    assert_eq!(
+        parse_chain("velocity-router soft=2 medium=3 loud=4"),
+        vec![EffectSpec::VelocityRouter {
+            low: 64,
+            high: 96,
+            soft_ch: 1,
+            mid_ch: 2,
+            loud_ch: 3,
+        }]
+    );
+}
+
+#[test]
+fn velocity_router_full_form() {
+    assert_eq!(
+        parse_chain("velocity-router low=40 high=100 soft=1 medium=8 loud=16"),
+        vec![EffectSpec::VelocityRouter {
+            low: 40,
+            high: 100,
+            soft_ch: 0,
+            mid_ch: 7,
+            loud_ch: 15,
+        }]
+    );
+}
+
+#[test]
+fn velocity_router_requires_all_three_channels() {
+    let msg = parse_err("velocity-router medium=3 loud=4");
+    assert!(
+        msg.contains("soft"),
+        "error should name the missing property: {msg}"
+    );
+    let msg = parse_err("velocity-router soft=2 loud=4");
+    assert!(
+        msg.contains("medium"),
+        "error should name the missing property: {msg}"
+    );
+    let msg = parse_err("velocity-router soft=2 medium=3");
+    assert!(
+        msg.contains("loud"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn velocity_router_low_must_stay_below_high() {
+    let msg = parse_err("velocity-router low=96 high=96 soft=2 medium=3 loud=4");
+    assert!(
+        msg.contains("velocity-router") && msg.contains("low=96") && msg.contains("high=96"),
+        "equal bounds leave no middle band: {msg}"
+    );
+    let msg = parse_err("velocity-router low=100 high=64 soft=2 medium=3 loud=4");
+    assert!(msg.contains("low=100"), "low above high: {msg}");
+}
+
+#[test]
+fn velocity_router_range_errors() {
+    let msg = parse_err("velocity-router low=0 soft=2 medium=3 loud=4");
+    assert!(msg.contains("low") && msg.contains("1..=127"), "{msg}");
+    let msg = parse_err("velocity-router high=128 soft=2 medium=3 loud=4");
+    assert!(msg.contains("high") && msg.contains("1..=127"), "{msg}");
+    let msg = parse_err("velocity-router soft=0 medium=3 loud=4");
+    assert!(msg.contains("1..=16"), "channels are 1-based: {msg}");
+    let msg = parse_err("velocity-router soft=2 medium=3 loud=17");
+    assert!(msg.contains("1..=16") && msg.contains("17"), "{msg}");
+}
+
+#[test]
+fn anti_accent_defaults() {
+    assert_eq!(
+        parse_chain("anti-accent"),
+        vec![EffectSpec::AntiAccent {
+            seed: 0,
+            level: 30,
+            every: TimeSpec::Millis(30000.0),
+        }]
+    );
+}
+
+#[test]
+fn anti_accent_full_form_with_beats() {
+    assert_eq!(
+        parse_chain("anti-accent level=20 beats=8 seed=2"),
+        vec![EffectSpec::AntiAccent {
+            seed: 2,
+            level: 20,
+            every: TimeSpec::Beats(8.0),
+        }]
+    );
+}
+
+#[test]
+fn anti_accent_every_below_a_second_is_rejected() {
+    let msg = parse_err("anti-accent every=\"500ms\"");
+    assert!(
+        msg.contains("anti-accent") && msg.contains("every") && msg.contains("at least 1s"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn anti_accent_level_out_of_range_is_rejected() {
+    let msg = parse_err("anti-accent level=0");
+    assert!(msg.contains("level") && msg.contains("1..=127"), "{msg}");
+    let msg = parse_err("anti-accent level=128");
+    assert!(msg.contains("1..=127") && msg.contains("128"), "{msg}");
+}
+
+#[test]
+fn mass_crescendo_defaults() {
+    assert_eq!(
+        parse_chain("mass-crescendo"),
+        vec![EffectSpec::MassCrescendo {
+            period: TimeSpec::Millis(120000.0),
+            depth: 0.6,
+            shape: CrescendoShape::Arch,
+        }]
+    );
+}
+
+#[test]
+fn mass_crescendo_full_form() {
+    assert_eq!(
+        parse_chain("mass-crescendo period=\"60s\" depth=0.4 shape=\"ramp\""),
+        vec![EffectSpec::MassCrescendo {
+            period: TimeSpec::Millis(60000.0),
+            depth: 0.4,
+            shape: CrescendoShape::Ramp,
+        }]
+    );
+}
+
+#[test]
+fn mass_crescendo_period_below_a_second_is_rejected() {
+    let msg = parse_err("mass-crescendo period=\"900ms\"");
+    assert!(
+        msg.contains("mass-crescendo") && msg.contains("period") && msg.contains("at least 1s"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn mass_crescendo_depth_out_of_range_is_rejected() {
+    let msg = parse_err("mass-crescendo depth=1.5");
+    assert!(msg.contains("depth") && msg.contains("0..=1"), "{msg}");
+    let msg = parse_err("mass-crescendo depth=-0.1");
+    assert!(msg.contains("0..=1"), "lower bound: {msg}");
+}
+
+#[test]
+fn mass_crescendo_bad_shape_is_rejected() {
+    let msg = parse_err("mass-crescendo shape=\"sawtooth\"");
+    assert!(
+        msg.contains("sawtooth") && msg.contains("ramp") && msg.contains("arch"),
+        "error should show the bad shape and the alternatives: {msg}"
+    );
 }
 
 #[test]

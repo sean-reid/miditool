@@ -149,6 +149,26 @@ effects
   velocity-curve gamma=1.0 floor=1 ceiling=127
       Reshape touch: gamma below 1 lifts soft playing, above 1 compresses
       it. Output maps into floor..ceiling.
+  accent-groups 3 5 accent=112 rest=64
+      Additive accent groups (3+5 and so on): the first note of each
+      group lands at the accent velocity, the rest lay back at rest.
+  feldman-field seed=0 floor=8 ceiling=28 jitter=4
+      Feldman's quiet field: every velocity sinks into floor..ceiling
+      with a seeded jitter, so nothing rises above a whisper.
+  velocity-invert pivot=64
+      Mirror velocities around the pivot: soft playing comes out loud
+      and loud playing comes out soft.
+  velocity-router low=64 high=96 soft=2 medium=3 loud=4
+      Route notes by touch: below low goes to the soft channel, above
+      high to the loud one, everything between to medium.
+  anti-accent level=30 every=\"30s\" seed=0
+      Seeded anti-accents: roughly once per every (at least 1s), one
+      note is pressed down to the level velocity, denting any accent
+      that tries to form.
+  mass-crescendo period=\"120s\" depth=0.6 shape=\"arch\"
+      A slow tide under the dynamics: velocities swell by up to depth
+      over each period, rising and falling (\"arch\") or rising and
+      resetting (\"ramp\").
   channelize <1-16>
       Send everything to one MIDI channel.
   klangfarben 2 3 4 mode=\"cycle\" seed=0
@@ -165,6 +185,22 @@ effects
   stutter repeats=6 first=\"30ms\" curve=1.0
       Ratchet each note into a burst: gaps start at first, then stretch
       (curve above 1) or tighten (below 1) as the burst plays out.
+  euclidean-gate k=3 n=8 rotation=0 pulse=\"125ms\" mode=\"defer\"
+      Gate notes through a Euclidean rhythm: k pulses spread evenly
+      over n steps of pulse length (default a quarter beat). Off-step
+      notes wait for the next pulse, or vanish with mode=\"drop\".
+  quantize grid=\"125ms\" strength=1.0
+      Pull events onto a time grid (default a quarter beat): strength
+      1 snaps them exactly, lower values move them only part way.
+  talea 250 500 250 1000
+  talea 1 0.5 0.5 2 beats=true
+      Lock notes to a repeating duration cycle, the medieval talea:
+      entries are milliseconds, or beats against the tempo with
+      beats=true. Each entry resolves to 1ms..60s.
+  added-value seed=<u64> unit=\"60ms\" extend=0.3 defer=0.0
+      Messiaen's added values: a seeded share of notes stretches one
+      unit longer (extend) or arrives one unit late (defer), so the
+      meter never quite settles.
   script \"wedge.lua\" seed=0
       Run a Luau script on every event: return nil to pass, false to
       drop, a table (or an array of tables) to emit. The path resolves

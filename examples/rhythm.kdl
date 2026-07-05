@@ -1,0 +1,27 @@
+// Two takes on time and touch: a Euclidean tresillo with additive
+// accents, and a Feldman field where everything sinks toward silence
+// while added values quietly unsettle the pulse.
+//
+// Everything random is seeded, so the same playing gives the same music.
+
+input "Roland"
+output virtual="miditool Rhythm"
+
+tempo 100                            // beats= times below follow this
+
+// Whatever you play is gated onto the tresillo (3 pulses over 8 steps,
+// an eighth note each); the accents then group the survivors 3+3+2, the
+// first note of each group landing hard and the rest laying back.
+scene "tresillo" {
+    euclidean-gate k=3 n=8 beats=0.5
+    accent-groups 3 3 2 accent=118 rest=72
+}
+
+// Every note sinks into a whisper-quiet band with a little seeded
+// jitter; added values stretch or hold back a share of them by 80ms,
+// and roughly twice a minute one note is pressed down even further.
+scene "feldman" {
+    feldman-field seed=6 floor=6 ceiling=24 jitter=3
+    added-value seed=11 unit="80ms" extend=0.4
+    anti-accent level=12 every="30s" seed=2
+}

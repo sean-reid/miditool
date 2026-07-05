@@ -6,8 +6,8 @@ use std::net::IpAddr;
 
 use crate::ast;
 use crate::{
-    ClusterAnchor, ClusterKind, Config, ConfigError, EffectSpec, OutputSpec, RemoteSpec, RowForm,
-    SceneSpec, ShuffleMode, SieveSnap, TimeSpec,
+    ClusterAnchor, ClusterKind, Config, ConfigError, CrescendoShape, EffectSpec, OutputSpec,
+    RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TimeSpec,
 };
 
 /// Output port name used when the config has no `output` node.
@@ -714,6 +714,199 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
                 sieve,
             }
         }
+        E::EuclideanGate {
+            k,
+            n,
+            rotation,
+            pulse,
+            beats,
+            mode,
+        } => {
+            let n = bounded("euclidean-gate", "n", n, 1, 64)?;
+            let k = bounded("euclidean-gate", "k", k, 1, 64)?;
+            ordered("euclidean-gate", "k", k, "n", n)?;
+            let rotation = rotation.unwrap_or(0);
+            if !(0..n as i64).contains(&rotation) {
+                return Err(ConfigError::invalid(
+                    "euclidean-gate",
+                    format!("rotation must be less than n={n}, got {rotation}"),
+                ));
+            }
+            EffectSpec::EuclideanGate {
+                k,
+                n,
+                rotation: rotation as u8,
+                pulse: time_spec_or_beats("euclidean-gate", "pulse", pulse, beats, 0.25)?,
+                defer: gate_defer(mode)?,
+            }
+        }
+        E::Quantize {
+            grid,
+            beats,
+            strength,
+        } => EffectSpec::Quantize {
+            grid: time_spec_or_beats("quantize", "grid", grid, beats, 0.25)?,
+            strength: fraction(
+                "quantize",
+                "strength",
+                strength.map_or(1.0, |ast::Number(v)| v),
+            )?,
+        },
+        E::Talea { durations, beats } => {
+            if durations.is_empty() || durations.len() > 32 {
+                return Err(ConfigError::invalid(
+                    "talea",
+                    format!(
+                        "between 1 and 32 durations are required, got {}",
+                        durations.len()
+                    ),
+                ));
+            }
+            // Entries are milliseconds unless beats=true reads them as
+            // beat counts. Millisecond entries are range-checked here;
+            // beat entries only once the CLI resolves them against the
+            // tempo, since 1ms..=60s is an absolute constraint.
+            let in_beats = beats.unwrap_or(false);
+            let mut items = Vec::with_capacity(durations.len());
+            for ast::Number(value) in durations {
+                if in_beats {
+                    if !(value.is_finite() && value > 0.0) {
+                        return Err(ConfigError::invalid(
+                            "talea",
+                            format!(
+                                "with beats=true entries must be finite and greater than 0, \
+                                 got {value}"
+                            ),
+                        ));
+                    }
+                    items.push(TimeSpec::Beats(value));
+                } else {
+                    if !(value.is_finite() && (1.0..=60_000.0).contains(&value)) {
+                        return Err(ConfigError::invalid(
+                            "talea",
+                            format!("each duration must be within 1ms..=60s, got {value}ms"),
+                        ));
+                    }
+                    items.push(TimeSpec::Millis(value));
+                }
+            }
+            EffectSpec::Talea { durations: items }
+        }
+        E::AddedValue {
+            seed,
+            unit,
+            beats,
+            extend,
+            defer,
+        } => EffectSpec::AddedValue {
+            seed,
+            unit: time_spec_or("added-value", "unit", unit, beats, 60.0)?,
+            extend: fraction(
+                "added-value",
+                "extend",
+                extend.map_or(0.3, |ast::Number(v)| v),
+            )?,
+            defer: fraction(
+                "added-value",
+                "defer",
+                defer.map_or(0.0, |ast::Number(v)| v),
+            )?,
+        },
+        E::AccentGroups {
+            groups,
+            accent,
+            rest,
+        } => {
+            if groups.is_empty() {
+                return Err(ConfigError::invalid(
+                    "accent-groups",
+                    "at least one group is required",
+                ));
+            }
+            let groups = groups
+                .into_iter()
+                .map(|g| bounded("accent-groups", "group", g, 1, 16))
+                .collect::<Result<Vec<u8>, _>>()?;
+            EffectSpec::AccentGroups {
+                groups,
+                accent: velocity("accent-groups", "accent", accent.unwrap_or(112))?,
+                rest: velocity("accent-groups", "rest", rest.unwrap_or(64))?,
+            }
+        }
+        E::FeldmanField {
+            seed,
+            floor,
+            ceiling,
+            jitter,
+        } => {
+            let floor = velocity("feldman-field", "floor", floor.unwrap_or(8))?;
+            let ceiling = velocity("feldman-field", "ceiling", ceiling.unwrap_or(28))?;
+            ordered("feldman-field", "floor", floor, "ceiling", ceiling)?;
+            EffectSpec::FeldmanField {
+                seed: seed.unwrap_or(0),
+                floor,
+                ceiling,
+                jitter: bounded("feldman-field", "jitter", jitter.unwrap_or(4), 0, 20)?,
+            }
+        }
+        E::VelocityInvert { pivot } => EffectSpec::VelocityInvert {
+            pivot: velocity("velocity-invert", "pivot", pivot.unwrap_or(64))?,
+        },
+        E::VelocityRouter {
+            low,
+            high,
+            soft,
+            medium,
+            loud,
+        } => {
+            let low = velocity("velocity-router", "low", low.unwrap_or(64))?;
+            let high = velocity("velocity-router", "high", high.unwrap_or(96))?;
+            if low >= high {
+                return Err(ConfigError::invalid(
+                    "velocity-router",
+                    format!("low={low} must be less than high={high}"),
+                ));
+            }
+            EffectSpec::VelocityRouter {
+                low,
+                high,
+                soft_ch: channel("velocity-router", soft)?,
+                mid_ch: channel("velocity-router", medium)?,
+                loud_ch: channel("velocity-router", loud)?,
+            }
+        }
+        E::AntiAccent {
+            seed,
+            level,
+            every,
+            beats,
+        } => {
+            let every = time_spec_or("anti-accent", "every", every, beats, 30_000.0)?;
+            at_least_a_second("anti-accent", "every", every)?;
+            EffectSpec::AntiAccent {
+                seed: seed.unwrap_or(0),
+                level: velocity("anti-accent", "level", level.unwrap_or(30))?,
+                every,
+            }
+        }
+        E::MassCrescendo {
+            period,
+            beats,
+            depth,
+            shape,
+        } => {
+            let period = time_spec_or("mass-crescendo", "period", period, beats, 120_000.0)?;
+            at_least_a_second("mass-crescendo", "period", period)?;
+            EffectSpec::MassCrescendo {
+                period,
+                depth: fraction(
+                    "mass-crescendo",
+                    "depth",
+                    depth.map_or(0.6, |ast::Number(v)| v),
+                )?,
+                shape: crescendo_shape(shape)?,
+            }
+        }
         E::Script { path, seed } => {
             if path.is_empty() {
                 return Err(ConfigError::invalid(
@@ -785,6 +978,34 @@ fn time_spec_or(
     match (time, beats) {
         (None, None) => Ok(TimeSpec::Millis(default_ms)),
         (time, beats) => time_spec(node, prop, time, beats),
+    }
+}
+
+/// Like [`time_spec_or`], but the fallback is a beat count rather than
+/// an absolute time.
+fn time_spec_or_beats(
+    node: &'static str,
+    prop: &str,
+    time: Option<String>,
+    beats: Option<ast::Number>,
+    default_beats: f64,
+) -> Result<TimeSpec, ConfigError> {
+    match (time, beats) {
+        (None, None) => Ok(TimeSpec::Beats(default_beats)),
+        (time, beats) => time_spec(node, prop, time, beats),
+    }
+}
+
+/// A duration that must come to at least one second. Only the absolute
+/// form is checkable here; the CLI re-checks once the tempo resolves a
+/// `beats=` value.
+fn at_least_a_second(node: &'static str, prop: &str, time: TimeSpec) -> Result<(), ConfigError> {
+    match time {
+        TimeSpec::Millis(ms) if ms < 1000.0 => Err(ConfigError::invalid(
+            node,
+            format!("{prop} must be at least 1s, got {ms}ms"),
+        )),
+        _ => Ok(()),
     }
 }
 
@@ -1089,6 +1310,30 @@ fn lottery_uniform(spread: Option<String>) -> Result<bool, ConfigError> {
         Some(other) => Err(ConfigError::invalid(
             "duration-lottery",
             format!("spread must be \"exp\" or \"uniform\", got \"{other}\""),
+        )),
+    }
+}
+
+/// `euclidean-gate`'s off-pulse handling: `"defer"` (the default) holds
+/// the note for the next sounding step, `"drop"` discards it.
+fn gate_defer(mode: Option<String>) -> Result<bool, ConfigError> {
+    match mode.as_deref() {
+        None | Some("defer") => Ok(true),
+        Some("drop") => Ok(false),
+        Some(other) => Err(ConfigError::invalid(
+            "euclidean-gate",
+            format!("mode must be \"defer\" or \"drop\", got \"{other}\""),
+        )),
+    }
+}
+
+fn crescendo_shape(shape: Option<String>) -> Result<CrescendoShape, ConfigError> {
+    match shape.as_deref() {
+        None | Some("arch") => Ok(CrescendoShape::Arch),
+        Some("ramp") => Ok(CrescendoShape::Ramp),
+        Some(other) => Err(ConfigError::invalid(
+            "mass-crescendo",
+            format!("shape must be \"ramp\" or \"arch\", got \"{other}\""),
         )),
     }
 }

@@ -3,14 +3,17 @@
 use std::path::Path;
 
 use miditool_config::{
-    ClusterAnchor, ClusterKind, EffectSpec, OutputSpec, RowForm, ShuffleMode, SieveSnap,
+    ClusterAnchor, ClusterKind, CrescendoShape, EffectSpec, OutputSpec, RowForm, ShuffleMode,
+    SieveSnap,
 };
 use miditool_core::graph::{Discard, Filter, Node, Pass};
 use miditool_effects::{
-    AggregateGate, BlockedKeys, Channelize, ClusterFist, Delay, DensityGovernor, DurationLottery,
-    Echo, KeyDist, Klangfarben, LooseKeys, NoteRoulette, PoissonCloud, RegistralScatter,
-    ResonanceHalo, Restrike, RingMod, RowSnap, ShuffleLock, SieveQuantizer, Stutter, Telescope,
-    Transpose, VelDist, VelocityCurve, VelocityDice, WedgeMirror,
+    AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, Channelize, ClusterFist,
+    Delay, DensityGovernor, DurationLottery, Echo, EuclideanGate, FeldmanField, KeyDist,
+    Klangfarben, LooseKeys, MassCrescendo, NoteRoulette, PoissonCloud, Quantize, RegistralScatter,
+    ResonanceHalo, Restrike, RingMod, RowSnap, ShuffleLock, SieveQuantizer, Stutter, Talea,
+    Telescope, Transpose, VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter,
+    WedgeMirror,
 };
 use miditool_io::OutputTarget;
 
@@ -238,6 +241,88 @@ fn build_node(spec: EffectSpec, tempo: f32, base: &Path) -> Result<Node, String>
                 sieve,
             )))
         }
+        EffectSpec::EuclideanGate {
+            k,
+            n,
+            rotation,
+            pulse,
+            defer,
+        } => Node::Leaf(Box::new(EuclideanGate::new(
+            k,
+            n,
+            rotation,
+            pulse.to_nanos(tempo),
+            defer,
+        ))),
+        EffectSpec::Quantize { grid, strength } => {
+            Node::Leaf(Box::new(Quantize::new(grid.to_nanos(tempo), strength)))
+        }
+        EffectSpec::Talea { durations } => {
+            // The config checks millisecond entries against 1ms..=60s;
+            // beat entries are only comparable here, once the tempo has
+            // resolved them.
+            let mut ns = Vec::with_capacity(durations.len());
+            for duration in durations {
+                let value = duration.to_nanos(tempo);
+                if !(1_000_000..=60_000_000_000).contains(&value) {
+                    return Err(format!(
+                        "talea: every entry must be within 1ms..=60s once beats resolve, \
+                         got {}ms",
+                        value / 1_000_000
+                    ));
+                }
+                ns.push(value);
+            }
+            Node::Leaf(Box::new(Talea::new(&ns)))
+        }
+        EffectSpec::AddedValue {
+            seed,
+            unit,
+            extend,
+            defer,
+        } => Node::Leaf(Box::new(AddedValue::new(
+            seed,
+            unit.to_nanos(tempo),
+            extend,
+            defer,
+        ))),
+        EffectSpec::AccentGroups {
+            groups,
+            accent,
+            rest,
+        } => Node::Leaf(Box::new(AccentGroups::new(&groups, accent, rest))),
+        EffectSpec::FeldmanField {
+            seed,
+            floor,
+            ceiling,
+            jitter,
+        } => Node::Leaf(Box::new(FeldmanField::new(seed, floor, ceiling, jitter))),
+        EffectSpec::VelocityInvert { pivot } => Node::Leaf(Box::new(VelocityInvert::new(pivot))),
+        EffectSpec::VelocityRouter {
+            low,
+            high,
+            soft_ch,
+            mid_ch,
+            loud_ch,
+        } => Node::Leaf(Box::new(VelocityRouter::new(
+            low, high, soft_ch, mid_ch, loud_ch,
+        ))),
+        EffectSpec::AntiAccent { seed, level, every } => {
+            let every = at_least_a_second("anti-accent", "every", every.to_nanos(tempo))?;
+            Node::Leaf(Box::new(AntiAccent::new(seed, level, every)))
+        }
+        EffectSpec::MassCrescendo {
+            period,
+            depth,
+            shape,
+        } => {
+            let period = at_least_a_second("mass-crescendo", "period", period.to_nanos(tempo))?;
+            Node::Leaf(Box::new(MassCrescendo::new(
+                period,
+                depth,
+                crescendo_shape(shape),
+            )))
+        }
         EffectSpec::Script { path, seed } => {
             let resolved = base.join(&path);
             let effect = miditool_script::ScriptEffect::from_file(&resolved, seed)
@@ -245,6 +330,27 @@ fn build_node(spec: EffectSpec, tempo: f32, base: &Path) -> Result<Node, String>
             Node::Leaf(Box::new(effect))
         }
     })
+}
+
+/// The 1s floor on the slow periods (`anti-accent every=`,
+/// `mass-crescendo period=`). The config checks the absolute form; a
+/// `beats=` value is only comparable here, once the tempo resolves it.
+fn at_least_a_second(node: &str, prop: &str, ns: u64) -> Result<u64, String> {
+    if ns >= 1_000_000_000 {
+        Ok(ns)
+    } else {
+        Err(format!(
+            "{node}: {prop} must be at least 1s once beats resolve, got {}ms",
+            ns / 1_000_000
+        ))
+    }
+}
+
+fn crescendo_shape(shape: CrescendoShape) -> miditool_effects::CrescendoShape {
+    match shape {
+        CrescendoShape::Ramp => miditool_effects::CrescendoShape::Ramp,
+        CrescendoShape::Arch => miditool_effects::CrescendoShape::Arch,
+    }
 }
 
 fn shuffle_mode(mode: ShuffleMode) -> miditool_effects::ShuffleMode {

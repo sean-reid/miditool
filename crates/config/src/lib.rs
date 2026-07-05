@@ -198,6 +198,15 @@ pub enum ClusterAnchor {
     Top,
 }
 
+/// The shape of a `mass-crescendo` swell over one period.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrescendoShape {
+    /// Rise across the period, then reset.
+    Ramp,
+    /// Rise to the middle of the period, then fall back.
+    Arch,
+}
+
 /// One effect node, validated and ready to compile into the effect graph.
 ///
 /// Ranges are inclusive throughout. Channels are stored 0-based (the wire
@@ -389,6 +398,81 @@ pub enum EffectSpec {
         level: f32,
         decay: TimeSpec,
         sieve: Option<String>,
+    },
+    /// Gate note-ons through a Euclidean rhythm: `k` pulses spread as
+    /// evenly as possible over `n` steps of `pulse` length, the pattern
+    /// rotated by `rotation` steps. Notes landing on a silent step wait
+    /// for the next sounding one when `defer`, or are dropped.
+    EuclideanGate {
+        k: u8,
+        n: u8,
+        rotation: u8,
+        pulse: TimeSpec,
+        defer: bool,
+    },
+    /// Pull events onto a time grid: `strength` 1 snaps them exactly
+    /// onto the nearest `grid` line, lower values move them only part
+    /// of the way.
+    Quantize { grid: TimeSpec, strength: f32 },
+    /// Lock note-ons to a repeating duration cycle, the medieval talea:
+    /// `talea 250 500 250 1000` in milliseconds, or `talea 1 0.5 0.5 2
+    /// beats=true` in beats against the tempo. Between 1 and 32 entries;
+    /// each must resolve to 1ms..=60s (millisecond entries are checked
+    /// here, beat entries by the CLI once the tempo resolves them).
+    Talea { durations: Vec<TimeSpec> },
+    /// Messiaen's added values: a seeded share of note-ons is stretched
+    /// by one `unit` (probability `extend`) or held back by one `unit`
+    /// (probability `defer`), unsettling the meter.
+    AddedValue {
+        seed: u64,
+        unit: TimeSpec,
+        extend: f32,
+        defer: f32,
+    },
+    /// Additive accent groups (`accent-groups 3 5` is 3+5): the first
+    /// note-on of each group takes the `accent` velocity, the rest of
+    /// the group takes `rest`.
+    AccentGroups {
+        groups: Vec<u8>,
+        accent: u8,
+        rest: u8,
+    },
+    /// Feldman's quiet field: every note-on velocity sinks into
+    /// `floor..=ceiling` with a seeded jitter of up to `jitter` steps,
+    /// so nothing rises above a whisper.
+    FeldmanField {
+        seed: u64,
+        floor: u8,
+        ceiling: u8,
+        jitter: u8,
+    },
+    /// Mirror note-on velocities around the `pivot`: soft playing comes
+    /// out loud and loud playing comes out soft.
+    VelocityInvert { pivot: u8 },
+    /// Route notes by touch: velocities below `low` go to the `soft`
+    /// channel, above `high` to the `loud` one, the rest to `mid`.
+    /// Channels are stored 0-based.
+    VelocityRouter {
+        low: u8,
+        high: u8,
+        soft_ch: u8,
+        mid_ch: u8,
+        loud_ch: u8,
+    },
+    /// Seeded anti-accents: roughly once per `every`, one note-on is
+    /// pressed down to the `level` velocity, denting any accent that
+    /// tries to form.
+    AntiAccent {
+        seed: u64,
+        level: u8,
+        every: TimeSpec,
+    },
+    /// A slow tide under the dynamics: velocities swell and recede over
+    /// each `period`, scaled by `depth`, shaped as a ramp or an arch.
+    MassCrescendo {
+        period: TimeSpec,
+        depth: f32,
+        shape: CrescendoShape,
     },
     /// Run a Luau script on every event: `script "wedge.lua" seed=42`.
     /// The path is kept exactly as written; the CLI resolves it against

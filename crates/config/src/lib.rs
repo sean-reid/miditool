@@ -133,6 +133,25 @@ impl TimeSpec {
     }
 }
 
+/// The MPE zone shared by the microtonal effects (`spectral-halo`,
+/// `just`, `scordatura`, `overtone-pedal`), from their `channels=` and
+/// `bend-range=` properties.
+///
+/// These effects speak MPE: each note goes out alone on one of the
+/// member channels `lo..=hi` with a per-note pitch bend, and the bend
+/// only lands right when the receiving instrument's pitch-bend range is
+/// set to `bend_range` semitones. Channels are stored 0-based (the wire
+/// format) even though config files write them 1-based.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MpeSpec {
+    /// Lowest member channel, inclusive.
+    pub lo: u8,
+    /// Highest member channel, inclusive.
+    pub hi: u8,
+    /// Pitch-bend range in semitones, `1..=96`.
+    pub bend_range: f32,
+}
+
 /// How `shuffle-lock` is allowed to permute keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShuffleMode {
@@ -389,6 +408,34 @@ pub enum EffectSpec {
     /// pitch classes missing from the held notes, voiced within
     /// `lo..=hi` and revoiced as the harmony changes.
     ComplementPad { lo: u8, hi: u8, vel: u8 },
+    /// Bloom each note into its first `partials` overtones, each one
+    /// `rolloff` times softer than the last, the series stretched
+    /// (`stretch` above 1) or squeezed (below 1) away from the pure
+    /// harmonic ladder. The partials land between the keys, so the
+    /// notes go out over the MPE zone with per-note pitch bends.
+    SpectralHalo {
+        partials: u8,
+        rolloff: f32,
+        stretch: f32,
+        mpe: MpeSpec,
+    },
+    /// Bend every note onto five-limit just intonation around `root`
+    /// (a pitch class 0..=11), so thirds and fifths lock pure; the
+    /// retuning rides per-note pitch bends over the MPE zone.
+    Just { root: u8, mpe: MpeSpec },
+    /// Retune chosen pitch classes by cents: `cents[pc]` is the offset
+    /// within -100..=100 for pitch class `pc`, 0 for the classes the
+    /// config leaves alone. The detuning rides per-note pitch bends
+    /// over the MPE zone.
+    Scordatura { cents: [i16; 12], mpe: MpeSpec },
+    /// A resonating pedal on the `fundamental` key: each note snaps to
+    /// the nearest partial of the fundamental, up to `max_partial`,
+    /// tuned exactly with a per-note pitch bend over the MPE zone.
+    OvertonePedal {
+        fundamental: u8,
+        max_partial: u8,
+        mpe: MpeSpec,
+    },
     /// Spray a seeded Poisson cloud of grains from each note-on:
     /// `density` grains per second for `duration`, pitches spread
     /// `sigma` semitones and velocities `vel_sigma` steps (both

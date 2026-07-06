@@ -10,10 +10,11 @@ use miditool_core::graph::{Discard, Filter, Node, Pass};
 use miditool_effects::{
     AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, Channelize, ClusterFist,
     ComplementPad, Delay, DensityGovernor, DurationLottery, Echo, EuclideanGate, FeldmanField,
-    KeyDist, Klangfarben, LooseKeys, MassCrescendo, ModeLock, NegativeHarmony, NoteRoulette,
-    PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowSnap,
-    ShuffleLock, SieveQuantizer, Stutter, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose,
-    VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
+    Just, KeyDist, Klangfarben, LooseKeys, MassCrescendo, ModeLock, NegativeHarmony, NoteRoulette,
+    OvertonePedal, PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod,
+    RowSnap, Scordatura, ShuffleLock, SieveQuantizer, SpectralHalo, Stutter, Talea, Telescope,
+    Tintinnabuli, Tonnetz, Transpose, VelDist, VelocityCurve, VelocityDice, VelocityInvert,
+    VelocityRouter, WedgeMirror,
 };
 use miditool_io::OutputTarget;
 
@@ -194,6 +195,30 @@ fn build_node(spec: EffectSpec, tempo: f32, base: &Path) -> Result<Node, String>
         EffectSpec::ComplementPad { lo, hi, vel } => {
             Node::Leaf(Box::new(ComplementPad::new(lo, hi, vel)))
         }
+        EffectSpec::SpectralHalo {
+            partials,
+            rolloff,
+            stretch,
+            mpe,
+        } => Node::Leaf(Box::new(SpectralHalo::new(
+            partials,
+            rolloff,
+            stretch,
+            mpe_params(mpe),
+        ))),
+        EffectSpec::Just { root, mpe } => Node::Leaf(Box::new(Just::new(root, mpe_params(mpe)))),
+        EffectSpec::Scordatura { cents, mpe } => {
+            Node::Leaf(Box::new(Scordatura::new(cents, mpe_params(mpe))))
+        }
+        EffectSpec::OvertonePedal {
+            fundamental,
+            max_partial,
+            mpe,
+        } => Node::Leaf(Box::new(OvertonePedal::new(
+            fundamental,
+            max_partial,
+            mpe_params(mpe),
+        ))),
         EffectSpec::PoissonCloud {
             seed,
             density,
@@ -389,6 +414,17 @@ fn at_least_a_second(node: &str, prop: &str, ns: u64) -> Result<u64, String> {
             "{node}: {prop} must be at least 1s once beats resolve, got {}ms",
             ns / 1_000_000
         ))
+    }
+}
+
+/// The MPE tail shared by the microtonal effect constructors: the member
+/// channel span (0-based, inclusive) and the pitch-bend range the
+/// receiver must be set to.
+fn mpe_params(mpe: miditool_config::MpeSpec) -> miditool_effects::MpeParams {
+    miditool_effects::MpeParams {
+        lo: mpe.lo,
+        hi: mpe.hi,
+        bend_range: mpe.bend_range,
     }
 }
 

@@ -4,8 +4,8 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use miditool_config::{
-    ClusterAnchor, ClusterKind, Config, CrescendoShape, EffectSpec, OutputSpec, Plr, RemoteSpec,
-    RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec, parse_str,
+    ClusterAnchor, ClusterKind, Config, CrescendoShape, EffectSpec, MpeSpec, OutputSpec, Plr,
+    RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec, parse_str,
 };
 
 fn parse(text: &str) -> Config {
@@ -3029,6 +3029,379 @@ fn complement_pad_range_errors() {
     assert!(msg.contains("0..=127") && msg.contains("128"), "{msg}");
     let msg = parse_err("complement-pad lo=90 hi=60");
     assert!(msg.contains("lo=90"), "lo must not exceed hi: {msg}");
+}
+
+/// The documented MPE defaults: member channels 2-16 (stored 0-based)
+/// and a 48-semitone bend range.
+fn default_mpe() -> MpeSpec {
+    MpeSpec {
+        lo: 1,
+        hi: 15,
+        bend_range: 48.0,
+    }
+}
+
+#[test]
+fn microtonal_example_parses_exactly() {
+    let config = parse(include_str!("../../../examples/microtonal.kdl"));
+    assert_eq!(
+        config,
+        Config {
+            input: Some("Roland".to_owned()),
+            hide_input: false,
+            output: OutputSpec::Virtual("miditool Microtonal".to_owned()),
+            tempo: 60.0,
+            remote: None,
+            scenes: vec![
+                SceneSpec {
+                    name: "spectral".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::FeldmanField {
+                            seed: 5,
+                            floor: 8,
+                            ceiling: 26,
+                            jitter: 3,
+                        },
+                        EffectSpec::SpectralHalo {
+                            partials: 5,
+                            rolloff: 0.6,
+                            stretch: 1.0,
+                            mpe: default_mpe(),
+                        },
+                    ],
+                },
+                SceneSpec {
+                    name: "just".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::Tintinnabuli {
+                            root: 2,
+                            minor: true,
+                            position: 1,
+                            direction: TDirection::Superior,
+                            level: 0.6,
+                        },
+                        EffectSpec::Just {
+                            root: 2,
+                            mpe: default_mpe(),
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+}
+
+#[test]
+fn spectral_halo_defaults() {
+    assert_eq!(
+        parse_chain("spectral-halo"),
+        vec![EffectSpec::SpectralHalo {
+            partials: 4,
+            rolloff: 0.7,
+            stretch: 1.0,
+            mpe: default_mpe(),
+        }]
+    );
+}
+
+#[test]
+fn spectral_halo_full_form() {
+    assert_eq!(
+        parse_chain(
+            "spectral-halo partials=8 rolloff=0.5 stretch=1.5 channels=\"3-8\" bend-range=24"
+        ),
+        vec![EffectSpec::SpectralHalo {
+            partials: 8,
+            rolloff: 0.5,
+            stretch: 1.5,
+            mpe: MpeSpec {
+                lo: 2,
+                hi: 7,
+                bend_range: 24.0,
+            },
+        }]
+    );
+}
+
+#[test]
+fn spectral_halo_range_errors() {
+    let msg = parse_err("spectral-halo partials=1");
+    assert!(
+        msg.contains("spectral-halo") && msg.contains("partials") && msg.contains("2..=8"),
+        "{msg}"
+    );
+    let msg = parse_err("spectral-halo partials=9");
+    assert!(msg.contains("2..=8") && msg.contains("9"), "{msg}");
+    let msg = parse_err("spectral-halo rolloff=1.5");
+    assert!(msg.contains("rolloff") && msg.contains("0..=1"), "{msg}");
+    let msg = parse_err("spectral-halo rolloff=-0.1");
+    assert!(msg.contains("0..=1"), "lower bound: {msg}");
+    let msg = parse_err("spectral-halo stretch=0.4");
+    assert!(msg.contains("stretch") && msg.contains("0.5..=2"), "{msg}");
+    let msg = parse_err("spectral-halo stretch=2.5");
+    assert!(msg.contains("0.5..=2") && msg.contains("2.5"), "{msg}");
+}
+
+#[test]
+fn mpe_channels_take_a_span_or_a_single_channel() {
+    // A "L-H" span and a single "N" both parse, rebased to the wire's
+    // 0..=15.
+    assert_eq!(
+        parse_chain("just root=\"c\" channels=\"2-16\""),
+        vec![EffectSpec::Just {
+            root: 0,
+            mpe: default_mpe(),
+        }]
+    );
+    assert_eq!(
+        parse_chain("just root=\"c\" channels=\"3\""),
+        vec![EffectSpec::Just {
+            root: 0,
+            mpe: MpeSpec {
+                lo: 2,
+                hi: 2,
+                bend_range: 48.0,
+            },
+        }]
+    );
+}
+
+#[test]
+fn mpe_channels_backwards_span_is_rejected() {
+    let msg = parse_err("just root=\"c\" channels=\"16-2\"");
+    assert!(
+        msg.contains("just") && msg.contains("16-2") && msg.contains("backwards"),
+        "error should name the node and the problem: {msg}"
+    );
+}
+
+#[test]
+fn mpe_channels_bad_forms_are_rejected() {
+    let msg = parse_err("just root=\"c\" channels=\"x\"");
+    assert!(
+        msg.contains("just") && msg.contains("\"x\"") && msg.contains("2-16"),
+        "error should name the format: {msg}"
+    );
+    let msg = parse_err("spectral-halo channels=\"\"");
+    assert!(msg.contains("2-16"), "empty string: {msg}");
+    let msg = parse_err("spectral-halo channels=\"2-\"");
+    assert!(msg.contains("2-16"), "missing high end: {msg}");
+    let msg = parse_err("spectral-halo channels=\"2-8-16\"");
+    assert!(msg.contains("2-16"), "too many dashes: {msg}");
+    let msg = parse_err("spectral-halo channels=\"2 - 16\"");
+    assert!(msg.contains("2-16"), "spaces are not digits: {msg}");
+}
+
+#[test]
+fn mpe_channels_out_of_range_are_rejected() {
+    let msg = parse_err("just root=\"c\" channels=\"0-16\"");
+    assert!(msg.contains("1..=16"), "channels are 1-based: {msg}");
+    let msg = parse_err("just root=\"c\" channels=\"17\"");
+    assert!(msg.contains("1..=16") && msg.contains("17"), "{msg}");
+}
+
+#[test]
+fn mpe_bend_range_accepts_integers_and_decimals() {
+    let chain = parse_chain(
+        "just root=\"c\" bend-range=1\n\
+         just root=\"c\" bend-range=96\n\
+         just root=\"c\" bend-range=24.5",
+    );
+    let bends: Vec<_> = chain
+        .iter()
+        .map(|spec| match spec {
+            EffectSpec::Just { mpe, .. } => mpe.bend_range,
+            other => panic!("expected just, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(bends, vec![1.0, 96.0, 24.5]);
+}
+
+#[test]
+fn mpe_bend_range_out_of_range_is_rejected() {
+    let msg = parse_err("just root=\"c\" bend-range=0");
+    assert!(
+        msg.contains("just") && msg.contains("bend-range") && msg.contains("1..=96"),
+        "{msg}"
+    );
+    let msg = parse_err("just root=\"c\" bend-range=97");
+    assert!(msg.contains("1..=96") && msg.contains("97"), "{msg}");
+}
+
+#[test]
+fn just_parses_exactly() {
+    assert_eq!(
+        parse_chain("just root=\"d\""),
+        vec![EffectSpec::Just {
+            root: 2,
+            mpe: default_mpe(),
+        }]
+    );
+    // The root takes the pitch-class grammar, numbers included.
+    assert_eq!(
+        parse_chain("just root=\"f#\""),
+        parse_chain("just root=\"6\"")
+    );
+}
+
+#[test]
+fn just_requires_a_root() {
+    let msg = parse_err("just");
+    assert!(
+        msg.contains("root"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn just_bad_root_is_rejected() {
+    let msg = parse_err("just root=\"h\"");
+    assert!(
+        msg.contains("just") && msg.contains("\"h\"") && msg.contains("f#"),
+        "error should name the node, the value, and the accepted forms: {msg}"
+    );
+}
+
+#[test]
+fn scordatura_parses_exactly() {
+    let mut cents = [0i16; 12];
+    cents[1] = -30;
+    cents[5] = 20;
+    assert_eq!(
+        parse_chain("scordatura \"c#=-30\" \"f=+20\""),
+        vec![EffectSpec::Scordatura {
+            cents,
+            mpe: default_mpe(),
+        }]
+    );
+}
+
+#[test]
+fn scordatura_full_form() {
+    let mut cents = [0i16; 12];
+    cents[9] = 100;
+    cents[10] = -100;
+    assert_eq!(
+        parse_chain("scordatura \"a=100\" \"bb=-100\" channels=\"2-9\" bend-range=12"),
+        vec![EffectSpec::Scordatura {
+            cents,
+            mpe: MpeSpec {
+                lo: 1,
+                hi: 8,
+                bend_range: 12.0,
+            },
+        }]
+    );
+}
+
+#[test]
+fn scordatura_requires_at_least_one_pair() {
+    let msg = parse_err("scordatura");
+    assert!(
+        msg.contains("scordatura") && msg.contains("at least one"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn scordatura_bad_pair_grammar_is_rejected() {
+    for bad in ["c#-30", "c=", "c=+", "c=1.5", "c=- 30"] {
+        let msg = parse_err(&format!("scordatura \"{bad}\""));
+        assert!(
+            msg.contains("scordatura") && msg.contains("c#=-30"),
+            "error for {bad:?} should show the pair shape: {msg}"
+        );
+    }
+    // A pair with no note falls to the pitch-class grammar.
+    let msg = parse_err("scordatura \"=30\"");
+    assert!(
+        msg.contains("scordatura") && msg.contains("note name"),
+        "empty note: {msg}"
+    );
+}
+
+#[test]
+fn scordatura_bad_note_is_rejected() {
+    let msg = parse_err("scordatura \"h=-30\"");
+    assert!(
+        msg.contains("scordatura") && msg.contains("\"h\"") && msg.contains("f#"),
+        "error should name the value and the accepted forms: {msg}"
+    );
+}
+
+#[test]
+fn scordatura_duplicate_pitch_class_is_rejected() {
+    let msg = parse_err("scordatura \"c=10\" \"c=20\"");
+    assert!(
+        msg.contains("scordatura") && msg.contains("\"c\"") && msg.contains("once"),
+        "error should name the repeated class: {msg}"
+    );
+    // Enharmonic spellings collide too: c# and db are the same class.
+    let msg = parse_err("scordatura \"c#=-30\" \"db=10\"");
+    assert!(msg.contains("\"db\"") && msg.contains("once"), "{msg}");
+}
+
+#[test]
+fn scordatura_cents_out_of_range_are_rejected() {
+    let msg = parse_err("scordatura \"c=101\"");
+    assert!(
+        msg.contains("scordatura") && msg.contains("-100..=100") && msg.contains("101"),
+        "{msg}"
+    );
+    let msg = parse_err("scordatura \"c=-101\"");
+    assert!(msg.contains("-100..=100") && msg.contains("-101"), "{msg}");
+}
+
+#[test]
+fn overtone_pedal_defaults() {
+    assert_eq!(
+        parse_chain("overtone-pedal fundamental=36"),
+        vec![EffectSpec::OvertonePedal {
+            fundamental: 36,
+            max_partial: 16,
+            mpe: default_mpe(),
+        }]
+    );
+}
+
+#[test]
+fn overtone_pedal_full_form() {
+    assert_eq!(
+        parse_chain("overtone-pedal fundamental=24 partials=32 channels=\"2-8\" bend-range=48"),
+        vec![EffectSpec::OvertonePedal {
+            fundamental: 24,
+            max_partial: 32,
+            mpe: MpeSpec {
+                lo: 1,
+                hi: 7,
+                bend_range: 48.0,
+            },
+        }]
+    );
+}
+
+#[test]
+fn overtone_pedal_requires_a_fundamental() {
+    let msg = parse_err("overtone-pedal partials=16");
+    assert!(
+        msg.contains("fundamental"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn overtone_pedal_range_errors() {
+    let msg = parse_err("overtone-pedal fundamental=128");
+    assert!(
+        msg.contains("overtone-pedal") && msg.contains("fundamental") && msg.contains("0..=127"),
+        "{msg}"
+    );
+    let msg = parse_err("overtone-pedal fundamental=36 partials=0");
+    assert!(msg.contains("partials") && msg.contains("1..=32"), "{msg}");
+    let msg = parse_err("overtone-pedal fundamental=36 partials=33");
+    assert!(msg.contains("1..=32") && msg.contains("33"), "{msg}");
 }
 
 #[test]

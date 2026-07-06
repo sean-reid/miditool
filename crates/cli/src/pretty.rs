@@ -137,6 +137,24 @@ effects
   complement-pad lo=60 hi=84 vel=18
       Sound what you are not playing: the missing pitch classes hum
       underneath as a quiet pad at vel, revoiced as the harmony moves.
+  spectral-halo partials=4 rolloff=0.7 stretch=1.0 channels=\"2-16\" bend-range=48
+      Each note blooms into its first partials overtones, every one
+      rolloff times softer than the last, the series stretched (above
+      1) or squeezed (below 1) away from the harmonic ladder.
+  just root=\"c\" channels=\"2-16\" bend-range=48
+      Five-limit just intonation around the root: every note bends
+      onto the pure ratio for its scale degree, so thirds and fifths
+      lock the way they do before equal temperament.
+  scordatura \"c#=-30\" \"f=+20\" channels=\"2-16\" bend-range=48
+      Retune chosen pitch classes by cents, each \"note=cents\" pair
+      one argument (-100..100); the classes not listed stay put.
+  overtone-pedal fundamental=36 partials=16 channels=\"2-16\" bend-range=48
+      A resonating pedal: each note snaps to the nearest partial of
+      the fundamental key (up to partials), tuned exactly.
+  The four above speak MPE: notes go out one per member channel
+  (channels=, written 1-16) with a per-note pitch bend, so the
+  receiving instrument must be in MPE mode with its pitch-bend range
+  matching bend-range=. They belong at the end of a chain.
   poisson-cloud seed=<u64> density=8.0 duration=\"2s\" sigma=7.0 vel-sigma=10.0 max=16
       Each note-on sprays a seeded cloud of grains: density grains per
       second for the duration, pitches and velocities spread Gaussian

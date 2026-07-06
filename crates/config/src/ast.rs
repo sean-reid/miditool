@@ -352,6 +352,44 @@ pub(crate) enum Effect {
         #[knus(property)]
         vel: Option<i64>,
     },
+    SpectralHalo {
+        #[knus(property)]
+        partials: Option<i64>,
+        #[knus(property)]
+        rolloff: Option<Number>,
+        #[knus(property)]
+        stretch: Option<Number>,
+        #[knus(property)]
+        channels: Option<String>,
+        #[knus(property)]
+        bend_range: Option<Number>,
+    },
+    Just {
+        #[knus(property)]
+        root: String,
+        #[knus(property)]
+        channels: Option<String>,
+        #[knus(property)]
+        bend_range: Option<Number>,
+    },
+    Scordatura {
+        #[knus(arguments)]
+        pairs: Vec<String>,
+        #[knus(property)]
+        channels: Option<String>,
+        #[knus(property)]
+        bend_range: Option<Number>,
+    },
+    OvertonePedal {
+        #[knus(property)]
+        fundamental: i64,
+        #[knus(property)]
+        partials: Option<i64>,
+        #[knus(property)]
+        channels: Option<String>,
+        #[knus(property)]
+        bend_range: Option<Number>,
+    },
     PoissonCloud {
         #[knus(property)]
         seed: u64,

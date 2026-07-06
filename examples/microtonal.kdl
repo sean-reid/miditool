@@ -1,0 +1,27 @@
+// Two rooms between the keys: a spectral bloom over each note, and a
+// keyboard bent onto pure just-intonation ratios.
+//
+// Both scenes speak MPE: notes go out one per member channel (2-16)
+// with a per-note pitch bend, so set the receiving instrument to MPE
+// mode with its pitch-bend range matching bend-range=48.
+
+input "Roland"
+output virtual="miditool Microtonal"
+
+tempo 60                             // beats= times below follow this
+
+// Every note blooms into its first five overtones, each softer than
+// the last, landing exactly on the harmonic series; the field keeps
+// the whole spectrum to a whisper.
+scene "spectral" {
+    feldman-field seed=5 floor=8 ceiling=26 jitter=3
+    spectral-halo partials=5 rolloff=0.6 stretch=1.0 channels="2-16" bend-range=48
+}
+
+// Five-limit just intonation around D: thirds and fifths lock pure,
+// and each melody note brings its bell from the D minor triad before
+// the retuning bends them both into place.
+scene "just" {
+    tintinnabuli root="d" minor=true position=1 direction="superior" level=0.6
+    just root="d" channels="2-16" bend-range=48
+}

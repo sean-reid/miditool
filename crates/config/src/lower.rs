@@ -6,8 +6,8 @@ use std::net::IpAddr;
 
 use crate::ast;
 use crate::{
-    ClusterAnchor, ClusterKind, Config, ConfigError, CrescendoShape, EffectSpec, OutputSpec, Plr,
-    RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec,
+    ClusterAnchor, ClusterKind, Config, ConfigError, CrescendoShape, EffectSpec, MpeSpec,
+    OutputSpec, Plr, RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec,
 };
 
 /// Output port name used when the config has no `output` node.
@@ -593,6 +593,54 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
                 vel: velocity("complement-pad", "vel", vel.unwrap_or(18))?,
             }
         }
+        E::SpectralHalo {
+            partials,
+            rolloff,
+            stretch,
+            channels,
+            bend_range,
+        } => EffectSpec::SpectralHalo {
+            partials: bounded("spectral-halo", "partials", partials.unwrap_or(4), 2, 8)?,
+            rolloff: fraction(
+                "spectral-halo",
+                "rolloff",
+                rolloff.map_or(0.7, |ast::Number(v)| v),
+            )?,
+            stretch: float_range(
+                "spectral-halo",
+                "stretch",
+                stretch.map_or(1.0, |ast::Number(v)| v),
+                0.5,
+                2.0,
+            )?,
+            mpe: mpe_spec("spectral-halo", channels, bend_range)?,
+        },
+        E::Just {
+            root,
+            channels,
+            bend_range,
+        } => EffectSpec::Just {
+            root: pitch_class("just", "root", &root)?,
+            mpe: mpe_spec("just", channels, bend_range)?,
+        },
+        E::Scordatura {
+            pairs,
+            channels,
+            bend_range,
+        } => EffectSpec::Scordatura {
+            cents: scordatura_cents(pairs)?,
+            mpe: mpe_spec("scordatura", channels, bend_range)?,
+        },
+        E::OvertonePedal {
+            fundamental,
+            partials,
+            channels,
+            bend_range,
+        } => EffectSpec::OvertonePedal {
+            fundamental: key("overtone-pedal", "fundamental", fundamental)?,
+            max_partial: bounded("overtone-pedal", "partials", partials.unwrap_or(16), 1, 32)?,
+            mpe: mpe_spec("overtone-pedal", channels, bend_range)?,
+        },
         E::PoissonCloud {
             seed,
             density,
@@ -1195,6 +1243,115 @@ fn channel(node: &'static str, value: i64) -> Result<u8, ConfigError> {
             format!("channels are 1..=16, got {value}"),
         ))
     }
+}
+
+/// The MPE tail shared by the microtonal effects: `channels=` (a member
+/// channel span, default "2-16") and `bend-range=` (semitones, default
+/// 48).
+fn mpe_spec(
+    node: &'static str,
+    channels: Option<String>,
+    bend_range: Option<ast::Number>,
+) -> Result<MpeSpec, ConfigError> {
+    let (lo, hi) = match channels {
+        // The default zone: member channels 2-16, stored 0-based.
+        None => (1, 15),
+        Some(text) => mpe_channels(node, &text)?,
+    };
+    let bend_range = bend_range.map_or(48.0, |ast::Number(v)| v);
+    if !(bend_range.is_finite() && (1.0..=96.0).contains(&bend_range)) {
+        return Err(ConfigError::invalid(
+            node,
+            format!("bend-range must be within 1..=96 semitones, got {bend_range}"),
+        ));
+    }
+    Ok(MpeSpec {
+        lo,
+        hi,
+        bend_range: bend_range as f32,
+    })
+}
+
+/// An MPE member channel span, written `channels="2-16"` (or a single
+/// `channels="3"`), human channel numbers 1..=16 with the low end
+/// first, rebased to the wire's 0..=15.
+fn mpe_channels(node: &'static str, text: &str) -> Result<(u8, u8), ConfigError> {
+    let bad = || {
+        ConfigError::invalid(
+            node,
+            format!("channels must look like \"2-16\" or a single \"3\", got \"{text}\""),
+        )
+    };
+    let (lo_text, hi_text) = match text.split_once('-') {
+        Some(pair) => pair,
+        None => (text, text),
+    };
+    let part = |text: &str| -> Result<i64, ConfigError> {
+        if text.is_empty() || !text.chars().all(|c| c.is_ascii_digit()) {
+            return Err(bad());
+        }
+        text.parse().map_err(|_| bad())
+    };
+    let lo = channel(node, part(lo_text)?)?;
+    let hi = channel(node, part(hi_text)?)?;
+    if lo > hi {
+        return Err(ConfigError::invalid(
+            node,
+            format!("channels run low to high, so \"{text}\" is backwards"),
+        ));
+    }
+    Ok((lo, hi))
+}
+
+/// The `scordatura` arguments: each one a `"note=cents"` pair retuning
+/// one pitch class, the note per the [`pitch_class`] grammar and the
+/// cents an integer within -100..=100 with an optional sign. At least
+/// one pair; a pitch class may only be retuned once; the classes not
+/// listed stay at 0.
+fn scordatura_cents(pairs: Vec<String>) -> Result<[i16; 12], ConfigError> {
+    if pairs.is_empty() {
+        return Err(ConfigError::invalid(
+            "scordatura",
+            "at least one \"note=cents\" pair is required",
+        ));
+    }
+    let mut cents = [0i16; 12];
+    let mut seen = [false; 12];
+    for pair in &pairs {
+        let bad = || {
+            ConfigError::invalid(
+                "scordatura",
+                format!(
+                    "each argument is a \"note=cents\" pair like \"c#=-30\" or \"f=+20\", \
+                     got \"{pair}\""
+                ),
+            )
+        };
+        let (note, amount) = pair.split_once('=').ok_or_else(bad)?;
+        let pc = pitch_class("scordatura", "note", note)?;
+        // i64's grammar is wider than a cents offset's: one optional
+        // sign, then digits, nothing else.
+        let digits = amount.strip_prefix(['+', '-']).unwrap_or(amount);
+        if digits.is_empty() || !digits.chars().all(|c| c.is_ascii_digit()) {
+            return Err(bad());
+        }
+        let value: i64 = amount.parse().map_err(|_| bad())?;
+        if !(-100..=100).contains(&value) {
+            return Err(ConfigError::invalid(
+                "scordatura",
+                format!("cents must be within -100..=100, got {value}"),
+            ));
+        }
+        if seen[pc as usize] {
+            return Err(ConfigError::invalid(
+                "scordatura",
+                format!("pitch class \"{note}\" is retuned more than once"),
+            ));
+        }
+        seen[pc as usize] = true;
+        cents[pc as usize] = value as i16;
+    }
+    Ok(cents)
 }
 
 fn ordered(

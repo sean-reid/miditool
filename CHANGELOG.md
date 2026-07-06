@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.8](https://github.com/sean-reid/miditool/compare/v0.1.7...v0.1.8) (2026-07-06)
+
+
+### Features
+
+* config nodes and help for the harmony wave ([a083cee](https://github.com/sean-reid/miditool/commit/a083ceef913d55670aa52d0f1539f277a7619def))
+* five harmonization effects ([0672d20](https://github.com/sean-reid/miditool/commit/0672d2038771a5876acdd364a3804d93c03ed7da))
+
 ## [0.1.7](https://github.com/sean-reid/miditool/compare/v0.1.6...v0.1.7) (2026-07-05)
 
 

@@ -37,10 +37,13 @@ input "Roland" hide=true         // optional: which keyboard, and whether to hid
 output virtual="miditool Out"    // optional: where the DAW listens
 tempo 96                         // optional: bpm for beats= times, default 120
 remote port=8320                 // optional: the web remote, off by default
+control { next-scene key=108; }  // optional: keyboard keys as gestures
 
 shuffle-lock seed=42             // the effects: an implicit top-level chain
 velocity-curve gamma=0.8
 ```
+
+The `control` block reserves keys on the keyboard itself as performance gestures and can hand scene switching to a clock; see [Performing](/miditool/guides/performing/).
 
 ### `input`
 

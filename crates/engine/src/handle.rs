@@ -60,6 +60,7 @@ pub struct EngineHandle {
     pub(crate) build: Arc<BuildScene>,
     pub(crate) controls: mpsc::Sender<Control>,
     pub(crate) graphs: mpsc::Sender<Node>,
+    pub(crate) graph: Thread,
     pub(crate) scheduler: Thread,
     pub(crate) dropped: Arc<AtomicU64>,
     pub(crate) tap: Arc<Mutex<Option<rtrb::Consumer<Event>>>>,
@@ -80,12 +81,13 @@ impl EngineHandle {
     /// Build scene `idx` and swap it in.
     ///
     /// The graph is built here, on the caller's thread, then handed to
-    /// the MIDI thread over the same channel hot reload uses: the swap
-    /// lands on the next incoming MIDI event, and notes held through the
-    /// outgoing graph keep draining through it. If the outgoing scene has
-    /// [`SceneDef::kill_on_exit`], the scheduler instead silences
-    /// everything sounding and drops all pending scheduled events, and it
-    /// does so immediately, without waiting for that next event.
+    /// the graph thread over the same channel hot reload uses. The swap
+    /// applies promptly, even while the player is idle (the graph thread
+    /// is unparked and installs it before the next packet or tick), and
+    /// notes held through the outgoing graph keep draining through it. If
+    /// the outgoing scene has [`SceneDef::kill_on_exit`], the scheduler
+    /// additionally silences everything sounding and drops all pending
+    /// scheduled events, immediately.
     ///
     /// Fails on an out-of-range index, a build error, or a stopped
     /// engine; the active scene is unchanged in every failure case.
@@ -105,6 +107,7 @@ impl EngineHandle {
         self.graphs
             .send(root)
             .map_err(|_| "the engine is not running".to_string())?;
+        self.graph.unpark();
         state.active = idx;
         Ok(())
     }
@@ -117,8 +120,10 @@ impl EngineHandle {
         self.scheduler.unpark();
     }
 
-    /// Events dropped because the scheduler's ring was full. Diagnostic;
-    /// anything above zero means sustained overload.
+    /// Events dropped because a realtime ring was full: input packets the
+    /// graph thread had no room for, or output events the scheduler's
+    /// ring rejected. Diagnostic; anything above zero means sustained
+    /// overload.
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
@@ -148,7 +153,7 @@ mod tests {
     use miditool_core::graph::{Effect, Pass};
     use miditool_core::{EventBuf, EventKind, ProcCx, Timestamp};
 
-    use crate::Feeder;
+    use crate::graph::{Feeder, InMsg, graph_loop};
     use crate::pipeline::Pipeline;
     use crate::scheduler::{Tap, now_ns, scheduler_loop};
 
@@ -199,21 +204,23 @@ mod tests {
         }
     }
 
-    /// A handle wired to a real scheduler thread and a pipeline the test
-    /// pumps by hand, standing in for the midir callback.
+    /// A handle wired to a real graph thread and a real scheduler thread:
+    /// everything the engine wires up except midir. `pump` stands in for
+    /// the input callback.
     struct Rig {
         epoch: Instant,
-        pipeline: Pipeline,
-        feeder: Feeder,
-        graphs: mpsc::Receiver<Node>,
+        input: rtrb::Producer<InMsg>,
+        stop: Arc<AtomicBool>,
+        graph: thread::JoinHandle<()>,
         ctl: mpsc::Sender<Control>,
         out: mpsc::Receiver<(Timestamp, Vec<u8>)>,
-        join: thread::JoinHandle<()>,
+        sched: thread::JoinHandle<()>,
         handle: EngineHandle,
     }
 
     fn rig(defs: Vec<SceneDef>, build: BuildScene) -> Rig {
         let epoch = Instant::now();
+        let (input_tx, input_rx) = rtrb::RingBuffer::new(64);
         let (ring_tx, ring_rx) = rtrb::RingBuffer::new(64);
         let (ctl_tx, ctl_rx) = mpsc::channel();
         let (out_tx, out_rx) = mpsc::channel();
@@ -223,7 +230,7 @@ mod tests {
             ring: tap_tx,
             enabled: Arc::clone(&tap_enabled),
         };
-        let join = thread::spawn(move || {
+        let sched = thread::spawn(move || {
             scheduler_loop(epoch, ring_rx, ctl_rx, tap, &mut |b| {
                 out_tx.send((now_ns(epoch), b.to_vec())).unwrap();
             });
@@ -231,51 +238,48 @@ mod tests {
         let root = build(0).expect("scene 0 builds");
         let (graph_tx, graph_rx) = mpsc::channel();
         let dropped = Arc::new(AtomicU64::new(0));
+        let feeder = Feeder {
+            ring: ring_tx,
+            seq: 0,
+            dropped: Arc::clone(&dropped),
+            scheduler: sched.thread().clone(),
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let graph = thread::spawn(move || {
+            graph_loop(epoch, Pipeline::new(root), input_rx, graph_rx, feeder, flag);
+        });
         let handle = EngineHandle {
             scenes: Arc::new(Mutex::new(SceneState { defs, active: 0 })),
             build: Arc::new(build),
             controls: ctl_tx.clone(),
             graphs: graph_tx,
-            scheduler: join.thread().clone(),
-            dropped: Arc::clone(&dropped),
+            graph: graph.thread().clone(),
+            scheduler: sched.thread().clone(),
+            dropped,
             tap: Arc::new(Mutex::new(Some(tap_rx))),
             tap_enabled,
         };
         Rig {
             epoch,
-            pipeline: Pipeline::new(root),
-            feeder: Feeder {
-                ring: ring_tx,
-                seq: 0,
-                dropped,
-                scheduler: join.thread().clone(),
-            },
-            graphs: graph_rx,
+            input: input_tx,
+            stop,
+            graph,
             ctl: ctl_tx,
             out: out_rx,
-            join,
+            sched,
             handle,
         }
     }
 
     impl Rig {
-        /// Mirror of the engine's midir callback: install any pending
-        /// swap, then run the packet. Returns the timestamp used.
+        /// Mirror of the engine's midir callback: stamp the packet, push
+        /// it into the input ring, unpark the graph thread. Returns the
+        /// timestamp used.
         fn pump(&mut self, bytes: &[u8]) -> Timestamp {
             let now = now_ns(self.epoch);
-            let Rig {
-                pipeline,
-                feeder,
-                graphs,
-                ..
-            } = self;
-            while let Ok(root) = graphs.try_recv() {
-                pipeline.swap_graph(now, root, &mut |ev| feeder.event(ev));
-            }
-            pipeline.handle(now, bytes, &mut |ev| feeder.event(ev), &mut |_| {
-                panic!("unexpected raw bytes")
-            });
-            feeder.wake();
+            self.input.push(InMsg::new(now, bytes)).unwrap();
+            self.graph.thread().unpark();
             now
         }
 
@@ -291,11 +295,17 @@ mod tests {
             got
         }
 
-        /// Shut the scheduler down and return whatever else it sent.
+        /// Mirror of the engine's wind-down: stop flag, input closed,
+        /// graph thread joined, then scheduler shutdown. Returns whatever
+        /// else was sent.
         fn finish(self) -> Vec<(Timestamp, Vec<u8>)> {
+            self.stop.store(true, Ordering::Release);
+            drop(self.input);
+            self.graph.thread().unpark();
+            self.graph.join().unwrap();
             self.ctl.send(Control::Shutdown).unwrap();
-            self.join.thread().unpark();
-            self.join.join().unwrap();
+            self.sched.thread().unpark();
+            self.sched.join().unwrap();
             self.out.try_iter().collect()
         }
     }
@@ -321,8 +331,9 @@ mod tests {
 
         rig.handle.set_scene(1).unwrap();
         assert_eq!(rig.handle.active(), 1);
-        // The swap lands on the next event: a fresh note maps through
-        // scene 1 while the held note's off still routes through scene 0.
+        // The swap precedes any packet pushed after it: a fresh note maps
+        // through scene 1 while the held note's off still routes through
+        // scene 0.
         rig.pump(&[0x90, 61, 100]);
         rig.pump(&[0x80, 60, 0]);
         assert_eq!(
@@ -331,6 +342,43 @@ mod tests {
         );
         // Shutdown silences the one note scene 1 left sounding.
         assert_eq!(bytes_of(&rig.finish()), vec![vec![0x80, 66, 0]]);
+    }
+
+    /// Passes everything; on flush emits a marker note-off for key `id`
+    /// on channel 15, making swaps observable through the output alone.
+    /// A note-off rather than a CC because the scheduler's shutdown
+    /// forwards pending note-offs and drops everything else.
+    struct Marker(u8);
+
+    impl Effect for Marker {
+        fn process(&mut self, ev: &Event, out: &mut EventBuf, _cx: &ProcCx) {
+            out.push(*ev);
+        }
+
+        fn flush(&mut self, out: &mut EventBuf, _cx: &ProcCx) {
+            out.push(Event::new(
+                0,
+                EventKind::NoteOff {
+                    ch: 15,
+                    key: self.0,
+                    vel: 0,
+                },
+            ));
+        }
+    }
+
+    #[test]
+    fn set_scene_applies_while_the_player_is_idle() {
+        let build: BuildScene = Box::new(|i| Ok(Node::Leaf(Box::new(Marker(i as u8 + 1)))));
+        let rig = rig(vec![def("a", false), def("b", false)], build);
+        // No MIDI traffic at all. The outgoing scene 0 graph is idle, so
+        // the swap flushes it on the spot; its marker reaching the output
+        // proves the swap applied without waiting for an input event.
+        rig.handle.set_scene(1).unwrap();
+        let sent = rig.wait_sends(1);
+        assert_eq!(bytes_of(&sent), vec![vec![0x8F, 1, 0]]);
+        // Shutdown flushes the graph now current: scene 1's.
+        assert_eq!(bytes_of(&rig.finish()), vec![vec![0x8F, 2, 0]]);
     }
 
     #[test]
@@ -364,16 +412,17 @@ mod tests {
         });
         let mut rig = rig(vec![def("ring", false), def("plain", false)], build);
         let t = rig.pump(&[0x90, 60, 100]);
+        // Wait for the note-on so the packet is known to have mapped
+        // through scene 0 before the switch; a pending swap installs
+        // ahead of any packet still in the input ring.
+        assert_eq!(bytes_of(&rig.wait_sends(1)), vec![vec![0x90, 60, 100]]);
         rig.handle.set_scene(1).unwrap();
         // No kill: the scheduled note-off fires at its own deadline.
-        let sent = rig.wait_sends(2);
-        assert_eq!(
-            bytes_of(&sent),
-            vec![vec![0x90, 60, 100], vec![0x80, 60, 0]]
-        );
+        let sent = rig.wait_sends(1);
+        assert_eq!(bytes_of(&sent), vec![vec![0x80, 60, 0]]);
         // Never early; lateness is host scheduling noise and stays
         // unasserted.
-        let at = sent[1].0;
+        let at = sent[0].0;
         assert!(at + MS >= t + 100 * MS, "pending note-off sent early");
         assert!(bytes_of(&rig.finish()).is_empty());
     }

@@ -1,12 +1,12 @@
 //! The send side: a dedicated thread that owns the MIDI output and the
 //! boundary note tracker, and sends every event at its intended time.
 //!
-//! The MIDI callback pushes [`Msg`]s into a lock-free SPSC ring and
-//! unparks this thread; nothing is sent from the callback itself. Control
-//! messages travel on a separate mpsc channel rather than the ring: they
-//! come from cold-path threads (the engine handle), which would break the
-//! ring's single-producer contract, and mpsc's costs do not matter off
-//! the hot path.
+//! The graph thread pushes [`Msg`]s into a lock-free SPSC ring and
+//! unparks this thread; nothing is sent from the graph thread itself.
+//! Control messages travel on a separate mpsc channel rather than the
+//! ring: they come from cold-path threads (the engine handle), which
+//! would break the ring's single-producer contract, and mpsc's costs do
+//! not matter off the hot path.
 //!
 //! Timing: the thread parks until roughly half a millisecond before the
 //! next deadline (interruptible by unpark when new work arrives), then
@@ -40,7 +40,7 @@ pub(crate) const TAP_CAPACITY: usize = 1024;
 /// How close to a deadline parking hands over to spinning.
 const SPIN_NS: u64 = 500_000;
 
-/// One item on the callback-to-scheduler ring.
+/// One item on the graph-to-scheduler ring.
 pub(crate) enum Msg {
     /// A graph output event, to be sent at `ev.time`. `seq` is assigned
     /// at push time so equal-time events keep their order.

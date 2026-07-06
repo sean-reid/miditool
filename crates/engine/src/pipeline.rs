@@ -129,6 +129,19 @@ impl Pipeline {
         }
     }
 
+    /// Advance the current graph's free-running effects, emitting whatever
+    /// they produce. Draining generations do not tick: a swapped-out graph
+    /// only drains the notes and pedals it opened, so its generators fall
+    /// silent the moment it stops being current.
+    pub fn tick(&mut self, now_ns: Timestamp, emit: &mut impl FnMut(Event)) {
+        let cx = ProcCx::at(now_ns);
+        let mut out = EventBuf::new();
+        self.current.root.tick(now_ns, &mut out, &cx);
+        for e in &out {
+            emit(*e);
+        }
+    }
+
     /// Install a new graph built from a reloaded config.
     ///
     /// The old graph keeps draining the notes and pedals it opened. If it
@@ -292,7 +305,7 @@ impl Pipeline {
     /// Flush and drop a draining generation once nothing points at it.
     ///
     /// The retired graph's tree is deallocated right here, on the calling
-    /// (MIDI callback) thread. That is a deliberate exception to the
+    /// (graph) thread. That is a deliberate exception to the
     /// no-allocation rule: it can only happen after a reload or scene
     /// swap, at most once per swap, and handing the tree to another thread
     /// would complicate ownership for a cost paid only on those events.
@@ -652,6 +665,38 @@ mod tests {
         // current graph; the others still drain through their own graphs.
         assert_eq!(feed(&mut p, &[&[0x80, 60, 0]]), vec![off(69)]);
         assert_eq!(feed(&mut p, &[&[0x80, 62, 0]]), vec![off(64), flushed(2)]);
+    }
+
+    #[test]
+    fn tick_advances_the_current_graph_only() {
+        /// Passes input through; each tick emits a note-on for `.0`.
+        struct Ticking(u8);
+        impl Effect for Ticking {
+            fn process(&mut self, ev: &Event, out: &mut EventBuf, _cx: &ProcCx) {
+                out.push(*ev);
+            }
+            fn tick(&mut self, now: Timestamp, out: &mut EventBuf, _cx: &ProcCx) {
+                out.push(Event::new(
+                    now,
+                    EventKind::NoteOn {
+                        ch: 0,
+                        key: self.0,
+                        vel: 100,
+                    },
+                ));
+            }
+        }
+        let mut p = Pipeline::new(Node::Leaf(Box::new(Ticking(1))));
+        let mut out = Vec::new();
+        p.tick(7, &mut |ev| out.push(ev.kind));
+        assert_eq!(out, vec![on(1)]);
+        // Hold a note so the old graph drains rather than retiring, then
+        // swap: only the new current graph's generator keeps running.
+        feed(&mut p, &[&[0x90, 60, 100]]);
+        p.swap_graph(0, Node::Leaf(Box::new(Ticking(2))), &mut |_| {});
+        out.clear();
+        p.tick(8, &mut |ev| out.push(ev.kind));
+        assert_eq!(out, vec![on(2)]);
     }
 
     #[test]

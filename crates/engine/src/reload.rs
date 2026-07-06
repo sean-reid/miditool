@@ -6,8 +6,8 @@
 //! config's file name, with a debounce to coalesce the flurry each save
 //! produces. On a successful re-parse the active scene is carried across
 //! the edit by name (an edit may reorder scenes), falling back to scene 0
-//! when it disappeared; its rebuilt graph is handed to the MIDI callback
-//! thread over a channel and the shared scene table is updated. Any
+//! when it disappeared; its rebuilt graph is handed to the graph thread
+//! over a channel and the shared scene table is updated. Any
 //! failure is reported to stderr and leaves the running state alone, so a
 //! broken edit never kills a performance.
 

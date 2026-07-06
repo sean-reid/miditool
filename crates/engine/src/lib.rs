@@ -1,19 +1,27 @@
-//! The realtime run loop: decode incoming packets, run the effect graph,
-//! and hand the results to a dedicated scheduler thread that sends each
-//! event at its intended time, tracking what is sounding so shutdown
-//! leaves no hanging notes.
+//! The realtime run loop: a minimal MIDI input callback hands raw packets
+//! to a dedicated graph thread that decodes them, runs the effect graph on
+//! a steady tick, and feeds a scheduler thread that sends each event at
+//! its intended time, tracking what is sounding so shutdown leaves no
+//! hanging notes.
 //!
 //! All timestamps live on one monotonic clock, captured as an [`Instant`]
-//! when the engine starts: the callback stamps incoming events with the
+//! when the engine starts: the callback stamps incoming packets with the
 //! elapsed nanoseconds, time-based effects add deltas, and an event's
 //! `time` is the moment the scheduler sends it. The pieces:
 //!
-//! - [`Pipeline`] (pure, hot path): decode and route through the graph,
-//!   emitting possibly future-timed events. Owns the hot-reload graph
-//!   generations so a swapped-out graph keeps draining its held notes.
+//! - The MIDI callback (backend thread): timestamp the packet, push it
+//!   into a lock-free SPSC input ring, unpark the graph thread.
+//! - The graph thread (owns the [`Pipeline`]): drain the input ring,
+//!   apply graph swaps (even while idle), and advance free-running
+//!   effects every few milliseconds, emitting into a second SPSC ring.
+//!   Owns the hot-reload graph generations so a swapped-out graph keeps
+//!   draining its held notes.
 //! - The scheduler thread (owns the output and the note tracker): fed by
-//!   a lock-free SPSC ring, woken by unpark, promoted to realtime
-//!   priority when the OS allows it.
+//!   the graph thread's ring, woken by unpark.
+//!
+//! Both realtime threads are promoted to realtime priority when the OS
+//! allows it. Around them:
+//!
 //! - [`EngineHandle`]: the cold-path control surface a UI or web remote
 //!   drives, switching between named [`SceneDef`] graphs live, with a
 //!   panic button and a best-effort tap of every sent event.
@@ -21,12 +29,12 @@
 //!   re-parses the scenes and swaps the active scene's graph without
 //!   interrupting playing.
 
+mod graph;
 mod handle;
 mod pipeline;
 mod reload;
 mod scheduler;
 
-use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -34,15 +42,15 @@ use std::thread::{self, JoinHandle, Thread};
 use std::time::Instant;
 
 use audio_thread_priority::promote_current_thread_to_real_time;
-use miditool_core::{Event, Node};
 use miditool_io::{Input, IoError, OutputTarget};
 use thiserror::Error;
 
 pub use handle::{BuildScene, EngineHandle, ReloadScenes, SceneDef};
 pub use pipeline::{MAX_DRAINING, Pipeline};
 
+use graph::{Feeder, INPUT_RING_CAPACITY, InMsg, graph_loop};
 use handle::SceneState;
-use scheduler::{Control, Msg, RING_CAPACITY, TAP_CAPACITY, Tap, now_ns, scheduler_loop};
+use scheduler::{Control, RING_CAPACITY, TAP_CAPACITY, Tap, now_ns, scheduler_loop};
 
 /// Errors from engine setup and teardown. The per-event path reports
 /// nothing: a failed send mid-stream has no one to tell, though the first
@@ -57,78 +65,40 @@ pub enum EngineError {
     Spawn(std::io::Error),
     #[error("the scheduler thread panicked")]
     SchedulerPanicked,
+    #[error("the graph thread panicked")]
+    GraphPanicked,
     #[error("scene setup: {0}")]
     Scene(String),
 }
 
-/// The callback's single-producer handle to the scheduler: the ring, the
-/// running sequence counter, and the thread to unpark.
-struct Feeder {
-    ring: rtrb::Producer<Msg>,
-    seq: u64,
-    dropped: Arc<AtomicU64>,
-    scheduler: Thread,
-}
-
-impl Feeder {
-    fn event(&mut self, ev: Event) {
-        let seq = self.seq;
-        self.seq += 1;
-        if self.ring.push(Msg::Event { seq, ev }).is_err() {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    fn raw(&mut self, bytes: &[u8]) {
-        let msg = if bytes.len() <= 3 {
-            let mut buf = [0u8; 3];
-            buf[..bytes.len()].copy_from_slice(bytes);
-            Msg::Raw {
-                len: bytes.len() as u8,
-                bytes: buf,
-            }
-        } else {
-            // The documented hot-path allocation exception: SysEx only.
-            Msg::Sysex(bytes.into())
-        };
-        if self.ring.push(msg).is_err() {
-            self.dropped.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    fn wake(&self) {
-        self.scheduler.unpark();
-    }
-}
-
-/// State owned by the MIDI input callback thread. The feeder sits in a
-/// `RefCell` because `Pipeline::handle` takes two sink closures that both
-/// need it; they never overlap, so the borrow always succeeds.
+/// State owned by the MIDI input callback thread: the producer side of
+/// the input ring and the graph thread to unpark. The pipeline itself
+/// lives on the graph thread.
 struct CallbackState {
-    pipeline: Pipeline,
-    feeder: RefCell<Feeder>,
-    graphs: mpsc::Receiver<Node>,
+    input: rtrb::Producer<InMsg>,
+    dropped: Arc<AtomicU64>,
+    graph: Thread,
 }
 
-/// A running engine: one input port, one pipeline, one scheduler thread
-/// owning the output.
+/// A running engine: one input port, one graph thread owning the
+/// pipeline, one scheduler thread owning the output.
 ///
 /// Construct with [`Engine::run`]; stop cleanly with [`Engine::stop`].
 /// Dropping a running engine performs the same flush-and-silence sequence,
 /// ignoring errors.
 pub struct Engine {
     input: Option<Input<CallbackState>>,
+    graph: Option<JoinHandle<()>>,
     scheduler: Option<JoinHandle<Option<IoError>>>,
     controls: mpsc::Sender<Control>,
     stop: Arc<AtomicBool>,
-    epoch: Instant,
     _watcher: Option<reload::Watcher>,
 }
 
 impl Engine {
-    /// Open the output, start the scheduler thread, build a pipeline
-    /// around scene 0's graph, and connect it to the chosen input port.
-    /// Processing starts immediately on the backend's MIDI thread.
+    /// Open the output, start the scheduler and graph threads, build a
+    /// pipeline around scene 0's graph, and connect it to the chosen input
+    /// port. Processing starts immediately.
     ///
     /// `input` selects the source port as in [`miditool_io::open_input`]:
     /// a case-insensitive substring, or `None` to auto-pick. `scenes`
@@ -138,9 +108,8 @@ impl Engine {
     /// With `reload` set to `Some((config_path, reload_scenes))`, the
     /// config file is watched and each change re-parses it and rebuilds
     /// the active scene's graph off the hot path (carried across the edit
-    /// by name, falling back to scene 0), swapping it in on the next
-    /// incoming MIDI event (an idle rig applies the swap when the next
-    /// event arrives, which is exactly when it can first matter). Reload
+    /// by name, falling back to scene 0), swapping it in on the graph
+    /// thread within one tick, whether or not any MIDI is arriving. Reload
     /// errors go to stderr and leave the running scenes in place: a
     /// broken edit must never kill a performance.
     pub fn run(
@@ -216,48 +185,62 @@ impl Engine {
 
         let stop = Arc::new(AtomicBool::new(false));
         let dropped = Arc::new(AtomicU64::new(0));
+        let (input_tx, input_rx) = rtrb::RingBuffer::new(INPUT_RING_CAPACITY);
+        let feeder = Feeder {
+            ring: ring_tx,
+            seq: 0,
+            dropped: Arc::clone(&dropped),
+            scheduler: scheduler.thread().clone(),
+        };
+        let pipeline = Pipeline::new(root);
+        let graph_stop = Arc::clone(&stop);
+        let graph = thread::Builder::new()
+            .name("miditool graph".into())
+            .spawn(move || {
+                // Same best-effort promotion as the scheduler: the graph
+                // thread sits between the callback and the send loop, so
+                // it deserves the same wakeup priority.
+                if let Err(e) = promote_current_thread_to_real_time(512, 48_000) {
+                    eprintln!("miditool: graph thread runs without realtime priority: {e:?}");
+                }
+                graph_loop(epoch, pipeline, input_rx, graph_rx, feeder, graph_stop);
+            });
+        let graph = match graph {
+            Ok(g) => g,
+            Err(e) => {
+                abort_scheduler(&control_tx, scheduler);
+                return Err(EngineError::Spawn(e));
+            }
+        };
+
         let state = CallbackState {
-            pipeline: Pipeline::new(root),
-            feeder: RefCell::new(Feeder {
-                ring: ring_tx,
-                seq: 0,
-                dropped: Arc::clone(&dropped),
-                scheduler: scheduler.thread().clone(),
-            }),
-            graphs: graph_rx,
+            input: input_tx,
+            dropped: Arc::clone(&dropped),
+            graph: graph.thread().clone(),
         };
         let flag = Arc::clone(&stop);
         let input = miditool_io::open_input_with(
             input,
             move |_stamp, bytes, state: &mut CallbackState| {
-                if flag.load(Ordering::Relaxed) {
+                if flag.load(Ordering::Relaxed) || bytes.is_empty() {
                     return;
                 }
-                let CallbackState {
-                    pipeline,
-                    feeder,
-                    graphs,
-                } = state;
-                let now = now_ns(epoch);
-                // Install any pending reload before processing, so this
-                // event is the first the new graph sees. try_recv on an
-                // empty channel is one atomic load: hot-path cheap.
-                while let Ok(root) = graphs.try_recv() {
-                    pipeline.swap_graph(now, root, &mut |ev| feeder.borrow_mut().event(ev));
+                // Timestamp and forward; all decoding and graph work
+                // happens on the graph thread. [`InMsg::new`] copies short
+                // packets inline and boxes only SysEx-length ones, the
+                // documented hot-path allocation exception.
+                let msg = InMsg::new(now_ns(epoch), bytes);
+                if state.input.push(msg).is_err() {
+                    state.dropped.fetch_add(1, Ordering::Relaxed);
                 }
-                pipeline.handle(
-                    now,
-                    bytes,
-                    &mut |ev| feeder.borrow_mut().event(ev),
-                    &mut |b| feeder.borrow_mut().raw(b),
-                );
-                feeder.borrow().wake();
+                state.graph.unpark();
             },
             state,
         );
         let input = match input {
             Ok(input) => input,
             Err(e) => {
+                abort_graph(&stop, graph);
                 abort_scheduler(&control_tx, scheduler);
                 return Err(e.into());
             }
@@ -267,6 +250,7 @@ impl Engine {
             build,
             controls: control_tx.clone(),
             graphs: graph_tx,
+            graph: graph.thread().clone(),
             scheduler: scheduler.thread().clone(),
             dropped,
             tap: Arc::new(Mutex::new(Some(tap_rx))),
@@ -274,10 +258,10 @@ impl Engine {
         };
         let engine = Engine {
             input: Some(input),
+            graph: Some(graph),
             scheduler: Some(scheduler),
             controls: control_tx,
             stop,
-            epoch,
             _watcher: watcher,
         };
         Ok((engine, handle))
@@ -289,30 +273,37 @@ impl Engine {
     }
 
     /// Shared teardown for [`Engine::stop`] and `Drop`. Idempotent.
+    ///
+    /// Ordering: stop the watcher so no swap arrives mid-teardown, raise
+    /// the stop flag, disconnect the input (`close` blocks until the
+    /// callback cannot run again, making the input ring's producer side
+    /// dead), then join the graph thread, which drains whatever the
+    /// callback left in the ring, flushes the pipeline into the
+    /// scheduler's ring, and exits. Only then is the scheduler told to
+    /// shut down, so the flush's note-offs are already queued when it
+    /// takes its final drain.
     fn wind_down(&mut self) -> Result<(), EngineError> {
         let Some(input) = self.input.take() else {
             return Ok(());
         };
-        // Stop the watcher first so no swap arrives mid-teardown, stop
-        // feeding the pipeline, then disconnect. `close` blocks until the
-        // callback cannot run again, making the ring's producer side
-        // exclusively ours.
         self._watcher = None;
-        self.stop.store(true, Ordering::Relaxed);
-        let CallbackState {
-            mut pipeline,
-            feeder,
-            ..
-        } = input.close();
-        let mut feeder = feeder.into_inner();
-        pipeline.shutdown(now_ns(self.epoch), &mut |ev| feeder.event(ev));
+        self.stop.store(true, Ordering::Release);
+        drop(input.close());
+        let graph_panicked = match self.graph.take() {
+            Some(handle) => {
+                handle.thread().unpark();
+                handle.join().is_err()
+            }
+            None => false,
+        };
         let _ = self.controls.send(Control::Shutdown);
-        feeder.wake();
         let Some(handle) = self.scheduler.take() else {
             return Ok(());
         };
+        handle.thread().unpark();
         match handle.join() {
             Ok(Some(e)) => Err(e.into()),
+            Ok(None) if graph_panicked => Err(EngineError::GraphPanicked),
             Ok(None) => Ok(()),
             Err(_) => Err(EngineError::SchedulerPanicked),
         }
@@ -323,6 +314,13 @@ impl Drop for Engine {
     fn drop(&mut self) {
         let _ = self.wind_down();
     }
+}
+
+/// Tear down a graph thread that never got an engine around it.
+fn abort_graph(stop: &Arc<AtomicBool>, handle: JoinHandle<()>) {
+    stop.store(true, Ordering::Release);
+    handle.thread().unpark();
+    let _ = handle.join();
 }
 
 /// Tear down a scheduler thread that never got an engine around it.

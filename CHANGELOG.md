@@ -7,6 +7,11 @@
 
 * defer release pr generation until the previous release is tagged ([337f9d5](https://github.com/sean-reid/miditool/commit/337f9d512967efab6012c321f5eacf04fdec45eb))
 
+### Also in this release
+
+* mpe voice pool and four microtonal effects: spectral-halo, just, scordatura, overtone-pedal ([0f0a4eb](https://github.com/sean-reid/miditool/commit/0f0a4eb))
+* config nodes and help for the microtonal wave ([644711c](https://github.com/sean-reid/miditool/commit/644711c))
+
 ## [0.1.8](https://github.com/sean-reid/miditool/compare/v0.1.7...v0.1.8) (2026-07-06)
 
 

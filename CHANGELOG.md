@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7](https://github.com/sean-reid/miditool/compare/v0.1.6...v0.1.7) (2026-07-05)
+
+
+### Bug Fixes
+
+* draft releases until binaries are uploaded ([59e0c26](https://github.com/sean-reid/miditool/commit/59e0c26067158738eeea16af76e281f6d6826206))
+
 ## [0.1.6](https://github.com/sean-reid/miditool/compare/v0.1.5...v0.1.6) (2026-07-05)
 
 

@@ -13,5 +13,6 @@ arrayvec.workspace = true
 audio_thread_priority.workspace = true
 notify.workspace = true
 notify-debouncer-full.workspace = true
+rand.workspace = true
 rtrb.workspace = true
 thiserror.workspace = true

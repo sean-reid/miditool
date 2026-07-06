@@ -14,6 +14,7 @@ use std::thread::Thread;
 
 use miditool_core::{Event, Node};
 
+use crate::control::ControlMsg;
 use crate::scheduler::Control;
 
 /// One named scene from the config: an effect graph the player switches
@@ -65,6 +66,11 @@ pub struct EngineHandle {
     pub(crate) dropped: Arc<AtomicU64>,
     pub(crate) tap: Arc<Mutex<Option<rtrb::Consumer<Event>>>>,
     pub(crate) tap_enabled: Arc<AtomicBool>,
+    /// The control thread's inbox, when live control is configured:
+    /// manual scene changes are announced so the moments dwell restarts.
+    /// The control thread's own internal handle carries `None`, so its
+    /// automatic switches never loop back as manual ones.
+    pub(crate) control: Option<mpsc::Sender<ControlMsg>>,
 }
 
 impl EngineHandle {
@@ -76,6 +82,13 @@ impl EngineHandle {
     /// Index of the active scene.
     pub fn active(&self) -> usize {
         lock(&self.scenes).active
+    }
+
+    /// Active index and scene count under one lock take: the control
+    /// thread's gesture arithmetic needs both consistently.
+    pub(crate) fn scene_cursor(&self) -> (usize, usize) {
+        let state = lock(&self.scenes);
+        (state.active, state.defs.len())
     }
 
     /// Build scene `idx` and swap it in.
@@ -109,6 +122,11 @@ impl EngineHandle {
             .map_err(|_| "the engine is not running".to_string())?;
         self.graph.unpark();
         state.active = idx;
+        // A manual scene change restarts the moments dwell. Best effort:
+        // a closed inbox just means the engine is stopping.
+        if let Some(control) = &self.control {
+            let _ = control.send(ControlMsg::Sync);
+        }
         Ok(())
     }
 
@@ -247,7 +265,15 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let graph = thread::spawn(move || {
-            graph_loop(epoch, Pipeline::new(root), input_rx, graph_rx, feeder, flag);
+            graph_loop(
+                epoch,
+                Pipeline::new(root),
+                input_rx,
+                graph_rx,
+                feeder,
+                flag,
+                None,
+            );
         });
         let handle = EngineHandle {
             scenes: Arc::new(Mutex::new(SceneState { defs, active: 0 })),
@@ -259,6 +285,7 @@ mod tests {
             dropped,
             tap: Arc::new(Mutex::new(Some(tap_rx))),
             tap_enabled,
+            control: None,
         };
         Rig {
             epoch,

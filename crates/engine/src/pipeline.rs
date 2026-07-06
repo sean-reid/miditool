@@ -14,6 +14,8 @@ use miditool_core::event::CC_SUSTAIN;
 use miditool_core::wire::{Decoded, Decoder};
 use miditool_core::{Event, EventBuf, EventKind, Node, PerNote, ProcCx, Timestamp};
 
+use crate::control::GestureFilter;
+
 /// How many swapped-out graphs may drain held notes concurrently.
 pub const MAX_DRAINING: usize = 3;
 
@@ -99,6 +101,26 @@ impl Pipeline {
         emit: &mut impl FnMut(Event),
         raw: &mut impl FnMut(&[u8]),
     ) {
+        self.handle_filtered(now_ns, bytes, None, emit, raw);
+    }
+
+    /// [`Pipeline::handle`] with the gesture pre-filter seam. This is
+    /// where control keys are consumed: each decoded event is offered to
+    /// the filter before routing, so a consumed gesture never reaches
+    /// the graph, never claims a note generation, and never sounds.
+    /// Sitting between the decoder and the router keeps running status
+    /// intact (bytes cannot be dropped from a packet, decoded events
+    /// can) and keeps the unfiltered [`Pipeline::handle`] testable in
+    /// isolation. With no filter configured the cost is one `Option`
+    /// check per decoded event.
+    pub(crate) fn handle_filtered(
+        &mut self,
+        now_ns: Timestamp,
+        bytes: &[u8],
+        mut filter: Option<&mut GestureFilter>,
+        emit: &mut impl FnMut(Event),
+        raw: &mut impl FnMut(&[u8]),
+    ) {
         match bytes.first() {
             None => return,
             // Continuation of a multi-packet SysEx: forward raw until the
@@ -122,7 +144,14 @@ impl Pipeline {
         }
         for &b in bytes {
             match self.decoder.step(b) {
-                Decoded::Event(kind) => self.route(now_ns, kind, emit),
+                Decoded::Event(kind) => {
+                    if let Some(f) = filter.as_deref_mut()
+                        && f.consume(&kind)
+                    {
+                        continue;
+                    }
+                    self.route(now_ns, kind, emit);
+                }
                 Decoded::Realtime(byte) => raw(&[byte]),
                 Decoded::Pending => {}
             }

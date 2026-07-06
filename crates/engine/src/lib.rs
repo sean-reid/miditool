@@ -25,10 +25,16 @@
 //! - [`EngineHandle`]: the cold-path control surface a UI or web remote
 //!   drives, switching between named [`SceneDef`] graphs live, with a
 //!   panic button and a best-effort tap of every sent event.
+//! - The control thread (only with a [`ControlDef`]): receives gestures
+//!   the graph thread consumed from the input stream, applies them via
+//!   an internal [`EngineHandle`], and runs the optional moments clock
+//!   that wanders between scenes on a seeded schedule. All the cold
+//!   graph building a gesture triggers happens here.
 //! - [`Engine`]: the wiring, plus optional config-file watching that
 //!   re-parses the scenes and swaps the active scene's graph without
 //!   interrupting playing.
 
+mod control;
 mod graph;
 mod handle;
 mod pipeline;
@@ -45,9 +51,11 @@ use audio_thread_priority::promote_current_thread_to_real_time;
 use miditool_io::{Input, IoError, OutputTarget};
 use thiserror::Error;
 
+pub use control::{ControlDef, MomentsDef};
 pub use handle::{BuildScene, EngineHandle, ReloadScenes, SceneDef};
 pub use pipeline::{MAX_DRAINING, Pipeline};
 
+use control::{ControlMsg, GestureFilter, control_loop};
 use graph::{Feeder, INPUT_RING_CAPACITY, InMsg, graph_loop};
 use handle::SceneState;
 use scheduler::{Control, RING_CAPACITY, TAP_CAPACITY, Tap, now_ns, scheduler_loop};
@@ -91,6 +99,8 @@ pub struct Engine {
     graph: Option<JoinHandle<()>>,
     scheduler: Option<JoinHandle<Option<IoError>>>,
     controls: mpsc::Sender<Control>,
+    /// The control thread and its inbox, when live control is configured.
+    control: Option<(mpsc::Sender<ControlMsg>, JoinHandle<()>)>,
     stop: Arc<AtomicBool>,
     _watcher: Option<reload::Watcher>,
 }
@@ -112,12 +122,23 @@ impl Engine {
     /// thread within one tick, whether or not any MIDI is arriving. Reload
     /// errors go to stderr and leave the running scenes in place: a
     /// broken edit must never kill a performance.
+    ///
+    /// With `control` set, the configured keys become live gestures: the
+    /// graph thread consumes their note-ons (and the matching note-offs
+    /// and poly-pressure, on any channel) before the graph, so they
+    /// never sound, and a dedicated control thread applies the scene
+    /// switch or panic. A gesture targeting the scene already active is
+    /// a no-op. With [`ControlDef::moments`] the same thread also
+    /// switches scenes automatically on a seeded random schedule. When
+    /// `control` is `None`, no control thread exists and the event path
+    /// pays only a `None` check.
     pub fn run(
         input: Option<&str>,
         output: &OutputTarget,
         scenes: Vec<SceneDef>,
         build: BuildScene,
         reload: Option<(PathBuf, ReloadScenes)>,
+        control: Option<ControlDef>,
     ) -> Result<(Engine, EngineHandle), EngineError> {
         if scenes.is_empty() {
             return Err(EngineError::Scene("no scenes defined".into()));
@@ -193,6 +214,17 @@ impl Engine {
             scheduler: scheduler.thread().clone(),
         };
         let pipeline = Pipeline::new(root);
+        // Gesture plumbing: the filter rides on the graph thread, the
+        // receiver goes to the control thread spawned once the handle
+        // exists. Gestures fired before that thread runs just queue.
+        let (gesture_tx, gesture_rx, filter, moments) = match &control {
+            Some(def) => {
+                let (tx, rx) = mpsc::channel();
+                let filter = GestureFilter::new(def, tx.clone());
+                (Some(tx), Some(rx), Some(filter), def.moments.clone())
+            }
+            None => (None, None, None, None),
+        };
         let graph_stop = Arc::clone(&stop);
         let graph = thread::Builder::new()
             .name("miditool graph".into())
@@ -203,7 +235,9 @@ impl Engine {
                 if let Err(e) = promote_current_thread_to_real_time(512, 48_000) {
                     eprintln!("miditool: graph thread runs without realtime priority: {e:?}");
                 }
-                graph_loop(epoch, pipeline, input_rx, graph_rx, feeder, graph_stop);
+                graph_loop(
+                    epoch, pipeline, input_rx, graph_rx, feeder, graph_stop, filter,
+                );
             });
         let graph = match graph {
             Ok(g) => g,
@@ -213,9 +247,43 @@ impl Engine {
             }
         };
 
+        let handle = EngineHandle {
+            scenes: shared,
+            build,
+            controls: control_tx.clone(),
+            graphs: graph_tx,
+            graph: graph.thread().clone(),
+            scheduler: scheduler.thread().clone(),
+            dropped: Arc::clone(&dropped),
+            tap: Arc::new(Mutex::new(Some(tap_rx))),
+            tap_enabled,
+            control: gesture_tx.clone(),
+        };
+        let control_thread = match gesture_rx {
+            Some(rx) => {
+                // The control thread's own switches must not loop back as
+                // manual-change notifications, so its handle drops the
+                // notifier.
+                let mut internal = handle.clone();
+                internal.control = None;
+                let spawn = thread::Builder::new()
+                    .name("miditool control".into())
+                    .spawn(move || control_loop(internal, rx, moments));
+                match spawn {
+                    Ok(t) => Some(t),
+                    Err(e) => {
+                        abort_graph(&stop, graph);
+                        abort_scheduler(&control_tx, scheduler);
+                        return Err(EngineError::Spawn(e));
+                    }
+                }
+            }
+            None => None,
+        };
+
         let state = CallbackState {
             input: input_tx,
-            dropped: Arc::clone(&dropped),
+            dropped,
             graph: graph.thread().clone(),
         };
         let flag = Arc::clone(&stop);
@@ -240,27 +308,20 @@ impl Engine {
         let input = match input {
             Ok(input) => input,
             Err(e) => {
+                if let (Some(tx), Some(t)) = (&gesture_tx, control_thread) {
+                    abort_control(tx, t);
+                }
                 abort_graph(&stop, graph);
                 abort_scheduler(&control_tx, scheduler);
                 return Err(e.into());
             }
-        };
-        let handle = EngineHandle {
-            scenes: shared,
-            build,
-            controls: control_tx.clone(),
-            graphs: graph_tx,
-            graph: graph.thread().clone(),
-            scheduler: scheduler.thread().clone(),
-            dropped,
-            tap: Arc::new(Mutex::new(Some(tap_rx))),
-            tap_enabled,
         };
         let engine = Engine {
             input: Some(input),
             graph: Some(graph),
             scheduler: Some(scheduler),
             controls: control_tx,
+            control: gesture_tx.zip(control_thread),
             stop,
             _watcher: watcher,
         };
@@ -277,11 +338,14 @@ impl Engine {
     /// Ordering: stop the watcher so no swap arrives mid-teardown, raise
     /// the stop flag, disconnect the input (`close` blocks until the
     /// callback cannot run again, making the input ring's producer side
-    /// dead), then join the graph thread, which drains whatever the
-    /// callback left in the ring, flushes the pipeline into the
-    /// scheduler's ring, and exits. Only then is the scheduler told to
-    /// shut down, so the flush's note-offs are already queued when it
-    /// takes its final drain.
+    /// dead), wind down the control thread (gestures already in its
+    /// inbox are applied first, while the graph thread still listens),
+    /// then join the graph thread, which drains whatever the callback
+    /// left in the ring, flushes the pipeline into the scheduler's ring,
+    /// and exits. Only then is the scheduler told to shut down, so the
+    /// flush's note-offs are already queued when it takes its final
+    /// drain. A control-thread panic is ignored: it is a cold helper
+    /// whose loss cannot leave notes hanging.
     fn wind_down(&mut self) -> Result<(), EngineError> {
         let Some(input) = self.input.take() else {
             return Ok(());
@@ -289,6 +353,10 @@ impl Engine {
         self._watcher = None;
         self.stop.store(true, Ordering::Release);
         drop(input.close());
+        if let Some((tx, thread)) = self.control.take() {
+            let _ = tx.send(ControlMsg::Shutdown);
+            let _ = thread.join();
+        }
         let graph_panicked = match self.graph.take() {
             Some(handle) => {
                 handle.thread().unpark();
@@ -314,6 +382,12 @@ impl Drop for Engine {
     fn drop(&mut self) {
         let _ = self.wind_down();
     }
+}
+
+/// Tear down a control thread that never got an engine around it.
+fn abort_control(gestures: &mpsc::Sender<ControlMsg>, handle: JoinHandle<()>) {
+    let _ = gestures.send(ControlMsg::Shutdown);
+    let _ = handle.join();
 }
 
 /// Tear down a graph thread that never got an engine around it.

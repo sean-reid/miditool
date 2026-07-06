@@ -13,6 +13,11 @@
 //! drained immediately (the extra hop costs one ring push and an unpark,
 //! well under a millisecond); with no input the thread parks until the
 //! next tick deadline.
+//!
+//! When live control is configured, a [`GestureFilter`] rides along and
+//! consumes control-key events inside [`Pipeline::handle_filtered`],
+//! pushing decoded gestures over an mpsc channel to the control thread;
+//! the cold scene building happens there, never here.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -22,6 +27,7 @@ use std::time::{Duration, Instant};
 
 use miditool_core::{Event, Node, Timestamp};
 
+use crate::control::GestureFilter;
 use crate::pipeline::Pipeline;
 use crate::scheduler::{Msg, now_ns};
 
@@ -142,6 +148,7 @@ pub(crate) fn graph_loop(
     graphs: mpsc::Receiver<Node>,
     feeder: Feeder,
     stop: Arc<AtomicBool>,
+    mut filter: Option<GestureFilter>,
 ) {
     let feeder = RefCell::new(feeder);
     let mut next_tick = now_ns(epoch) + TICK_NS;
@@ -158,9 +165,10 @@ pub(crate) fn graph_loop(
             // pipeline. try_recv on an empty channel is hot-path cheap.
             apply_swaps(&mut pipeline, &graphs, &feeder, epoch);
             let (time, bytes) = msg.parts();
-            pipeline.handle(
+            pipeline.handle_filtered(
                 time,
                 bytes,
+                filter.as_mut(),
                 &mut |ev| feeder.borrow_mut().event(ev),
                 &mut |b| feeder.borrow_mut().raw(b),
             );
@@ -252,7 +260,15 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let graph = thread::spawn(move || {
-            graph_loop(epoch, Pipeline::new(root), in_rx, graph_rx, feeder, flag);
+            graph_loop(
+                epoch,
+                Pipeline::new(root),
+                in_rx,
+                graph_rx,
+                feeder,
+                flag,
+                None,
+            );
         });
         Rig {
             epoch,

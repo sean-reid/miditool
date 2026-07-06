@@ -62,6 +62,13 @@ impl ProcCx {
 pub trait Effect: Send {
     fn process(&mut self, ev: &Event, out: &mut EventBuf, cx: &ProcCx);
 
+    /// Called on the engine's steady cadence (every few milliseconds)
+    /// whether or not input arrives. Free-running effects (loops,
+    /// walkers, swarms) emit from here; the default does nothing.
+    /// Implementations quantize their own musical time against `now`
+    /// rather than assuming a fixed cadence.
+    fn tick(&mut self, _now: Timestamp, _out: &mut EventBuf, _cx: &ProcCx) {}
+
     /// Emit whatever is needed to wind down cleanly (typically note-offs
     /// for anything the effect still has sounding). Called on shutdown and,
     /// later, on scene switches and hot reloads.
@@ -154,6 +161,43 @@ impl Node {
                 for child in children {
                     let mark = out.len();
                     child.process(ev, out, cx);
+                    dedup_new(out, start, mark);
+                }
+            }
+        }
+    }
+
+    /// Advance free-running effects. A child's tick output flows through
+    /// the REST of its chain (a generator's notes still pass downstream
+    /// transforms), and fork branches merge with the same ordered-union
+    /// dedup as `process`.
+    pub fn tick(&mut self, now: Timestamp, out: &mut EventBuf, cx: &ProcCx) {
+        match self {
+            Node::Leaf(effect) => effect.tick(now, out, cx),
+            Node::Filter(_) => {}
+            Node::Chain(children) => {
+                // acc holds events still owed to the remaining children:
+                // each child first processes what upstream produced, then
+                // appends its own tick output for the children after it.
+                let mut acc = EventBuf::new();
+                let mut next = EventBuf::new();
+                for child in children {
+                    next.clear();
+                    for e in &acc {
+                        child.process(e, &mut next, cx);
+                    }
+                    child.tick(now, &mut next, cx);
+                    std::mem::swap(&mut acc, &mut next);
+                }
+                for e in &acc {
+                    cx.push(out, *e);
+                }
+            }
+            Node::Fork(children) => {
+                let start = out.len();
+                for child in children {
+                    let mark = out.len();
+                    child.tick(now, out, cx);
                     dedup_new(out, start, mark);
                 }
             }
@@ -450,6 +494,82 @@ mod tests {
             key: 60,
             vel: 1
         }));
+    }
+
+    /// A leaf that emits one fixed note-on per tick.
+    struct Ticker(u8);
+
+    impl Effect for Ticker {
+        fn process(&mut self, ev: &Event, out: &mut EventBuf, cx: &ProcCx) {
+            cx.push(out, *ev);
+        }
+
+        fn tick(&mut self, now: Timestamp, out: &mut EventBuf, cx: &ProcCx) {
+            cx.push(
+                out,
+                Event::new(
+                    now,
+                    EventKind::NoteOn {
+                        ch: 0,
+                        key: self.0,
+                        vel: 100,
+                    },
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn chain_tick_flows_through_downstream_children() {
+        let mut node = Node::Chain(vec![
+            Node::Leaf(Box::new(Ticker(60))),
+            Node::Leaf(Box::new(AddSemitones(12))),
+        ]);
+        let cx = ProcCx::at(7);
+        let mut out = EventBuf::new();
+        node.tick(7, &mut out, &cx);
+        assert_eq!(
+            out.iter().map(|e| e.kind).collect::<Vec<_>>(),
+            vec![EventKind::NoteOn {
+                ch: 0,
+                key: 72,
+                vel: 100
+            }],
+            "the ticker's note passes through the downstream transpose"
+        );
+    }
+
+    #[test]
+    fn chain_tick_does_not_feed_upstream_children() {
+        let mut node = Node::Chain(vec![
+            Node::Leaf(Box::new(AddSemitones(12))),
+            Node::Leaf(Box::new(Ticker(60))),
+        ]);
+        let cx = ProcCx::at(0);
+        let mut out = EventBuf::new();
+        node.tick(0, &mut out, &cx);
+        assert_eq!(
+            out.iter().map(|e| e.kind).collect::<Vec<_>>(),
+            vec![EventKind::NoteOn {
+                ch: 0,
+                key: 60,
+                vel: 100
+            }],
+            "a later child's tick output is not run through earlier children"
+        );
+    }
+
+    #[test]
+    fn fork_tick_merges_with_dedup() {
+        let mut node = Node::Fork(vec![
+            Node::Leaf(Box::new(Ticker(60))),
+            Node::Leaf(Box::new(Ticker(60))),
+            Node::Leaf(Box::new(Ticker(64))),
+        ]);
+        let cx = ProcCx::at(3);
+        let mut out = EventBuf::new();
+        node.tick(3, &mut out, &cx);
+        assert_eq!(out.len(), 2, "identical tick emissions merge");
     }
 
     #[test]

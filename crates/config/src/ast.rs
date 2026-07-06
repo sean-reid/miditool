@@ -570,6 +570,64 @@ pub(crate) enum Effect {
         #[knus(property)]
         shape: Option<String>,
     },
+    Continuum {
+        #[knus(property)]
+        rate: Option<Number>,
+        #[knus(property)]
+        order: Option<String>,
+        #[knus(property)]
+        gate: Option<Number>,
+        #[knus(property)]
+        seed: Option<u64>,
+    },
+    MetronomeSwarm {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        bpm_lo: Option<Number>,
+        #[knus(property)]
+        bpm_hi: Option<Number>,
+        #[knus(property)]
+        max: Option<i64>,
+        #[knus(property)]
+        fade: Option<Number>,
+    },
+    BrownianWalker {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        interval: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        sigma: Option<Number>,
+        #[knus(property)]
+        lo: Option<i64>,
+        #[knus(property)]
+        hi: Option<i64>,
+    },
+    Mechanico {
+        #[knus(property)]
+        pulse: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        repeats: Option<i64>,
+        #[knus(property)]
+        jam: Option<Number>,
+        #[knus(property)]
+        seed: Option<u64>,
+    },
+    Continuator {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        idle: Option<String>,
+        #[knus(property)]
+        beats: Option<Number>,
+        #[knus(property)]
+        max: Option<i64>,
+    },
     Script {
         #[knus(argument)]
         path: String,

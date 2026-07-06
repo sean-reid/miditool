@@ -239,6 +239,19 @@ pub enum ClusterAnchor {
     Top,
 }
 
+/// The order `continuum` cycles through the held keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContinuumOrder {
+    /// Bottom to top, then around again.
+    Up,
+    /// Top to bottom.
+    Down,
+    /// The order the keys were pressed.
+    Played,
+    /// A seeded random pick for every slot.
+    Random,
+}
+
 /// The shape of a `mass-crescendo` swell over one period.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrescendoShape {
@@ -582,6 +595,50 @@ pub enum EffectSpec {
         depth: f32,
         shape: CrescendoShape,
     },
+    /// Ligeti's Continuum machine: while keys are held, the held set
+    /// cycles as a stream of `rate` notes per second in the given
+    /// order, each note sounding for `gate` of its slot. The played
+    /// notes are consumed; the blur replaces them.
+    Continuum {
+        rate: f32,
+        order: ContinuumOrder,
+        gate: f32,
+        seed: u64,
+    },
+    /// The Poeme symphonique: each note-on winds up an independent
+    /// metronome ticking that key at a seeded tempo within
+    /// `bpm_lo..=bpm_hi`, every tick `fade` times softer, running
+    /// down after at most `max` repeats.
+    MetronomeSwarm {
+        seed: u64,
+        bpm_lo: f32,
+        bpm_hi: f32,
+        max: u8,
+        fade: f32,
+    },
+    /// Xenakis's Mists: each note-on releases a walker that steps a
+    /// Gaussian `sigma` semitones every `interval` and sounds where it
+    /// lands, fenced into `lo..=hi`, until the note-off calls it home.
+    BrownianWalker {
+        seed: u64,
+        interval: TimeSpec,
+        sigma: f32,
+        lo: u8,
+        hi: u8,
+    },
+    /// Ligeti's mechanico textures: played notes latch onto a
+    /// relentless `pulse` grid and are restruck up to `repeats` times,
+    /// except a seeded `jam` fraction of pulses that stick or drop.
+    Mechanico {
+        pulse: TimeSpec,
+        repeats: u8,
+        jam: f32,
+        seed: u64,
+    },
+    /// The Continuator: listens while you play, and once you fall
+    /// silent for `idle` it answers with a seeded walk over what it
+    /// heard, at most `max` notes or until you play again.
+    Continuator { seed: u64, idle: TimeSpec, max: u16 },
     /// Run a Luau script on every event: `script "wedge.lua" seed=42`.
     /// The path is kept exactly as written; the CLI resolves it against
     /// the config file's directory when it builds the graph, so parsing

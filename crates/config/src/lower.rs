@@ -6,8 +6,9 @@ use std::net::IpAddr;
 
 use crate::ast;
 use crate::{
-    ClusterAnchor, ClusterKind, Config, ConfigError, CrescendoShape, EffectSpec, MpeSpec,
-    OutputSpec, Plr, RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec,
+    ClusterAnchor, ClusterKind, Config, ConfigError, ContinuumOrder, CrescendoShape, EffectSpec,
+    MpeSpec, OutputSpec, Plr, RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection,
+    TimeSpec,
 };
 
 /// Output port name used when the config has no `output` node.
@@ -53,13 +54,16 @@ pub(crate) fn document(doc: ast::Document) -> Result<Config, ConfigError> {
             }
         },
     };
+    // The tempo resolves first: the generators' pulse floors are
+    // absolute, so lowering a `beats=` form needs it.
+    let tempo = tempo(doc.tempo)?;
     Ok(Config {
         input: doc.input.as_ref().map(|i| i.name.clone()),
         hide_input: doc.input.as_ref().and_then(|i| i.hide).unwrap_or(false),
         output,
-        tempo: tempo(doc.tempo)?,
+        tempo,
         remote: remote(doc.remote)?,
-        scenes: scenes(doc.scenes, doc.effects)?,
+        scenes: scenes(doc.scenes, doc.effects, tempo)?,
     })
 }
 
@@ -93,6 +97,7 @@ fn remote(node: Option<ast::Remote>) -> Result<Option<RemoteSpec>, ConfigError> 
 fn scenes(
     scene_nodes: Vec<ast::Scene>,
     loose: Vec<ast::Effect>,
+    tempo: f32,
 ) -> Result<Vec<SceneSpec>, ConfigError> {
     if scene_nodes.is_empty() {
         // The bare style: the whole document is one implicit chain. This
@@ -101,7 +106,7 @@ fn scenes(
         return Ok(vec![SceneSpec {
             name: MAIN_SCENE.to_owned(),
             kill_on_exit: false,
-            chain: effects(loose)?,
+            chain: effects(loose, tempo)?,
         }]);
     }
     if !loose.is_empty() {
@@ -113,7 +118,7 @@ fn scenes(
     }
     let mut scenes = Vec::with_capacity(scene_nodes.len());
     for node in scene_nodes {
-        let scene = scene(node)?;
+        let scene = scene(node, tempo)?;
         if scenes.iter().any(|s: &SceneSpec| s.name == scene.name) {
             return Err(ConfigError::invalid(
                 "scene",
@@ -125,7 +130,7 @@ fn scenes(
     Ok(scenes)
 }
 
-fn scene(node: ast::Scene) -> Result<SceneSpec, ConfigError> {
+fn scene(node: ast::Scene, tempo: f32) -> Result<SceneSpec, ConfigError> {
     if node.name.is_empty() {
         return Err(ConfigError::invalid(
             "scene",
@@ -154,7 +159,7 @@ fn scene(node: ast::Scene) -> Result<SceneSpec, ConfigError> {
     Ok(SceneSpec {
         name: node.name,
         kill_on_exit,
-        chain: effects(node.effects)?,
+        chain: effects(node.effects, tempo)?,
     })
 }
 
@@ -175,24 +180,31 @@ fn tempo(node: Option<ast::Tempo>) -> Result<f32, ConfigError> {
     }
 }
 
-fn effects(nodes: Vec<ast::Effect>) -> Result<Vec<EffectSpec>, ConfigError> {
-    effects_at(nodes, 0)
+fn effects(nodes: Vec<ast::Effect>, tempo: f32) -> Result<Vec<EffectSpec>, ConfigError> {
+    effects_at(nodes, tempo, 0)
 }
 
-fn effects_at(nodes: Vec<ast::Effect>, depth: usize) -> Result<Vec<EffectSpec>, ConfigError> {
-    nodes.into_iter().map(|node| effect(node, depth)).collect()
+fn effects_at(
+    nodes: Vec<ast::Effect>,
+    tempo: f32,
+    depth: usize,
+) -> Result<Vec<EffectSpec>, ConfigError> {
+    nodes
+        .into_iter()
+        .map(|node| effect(node, tempo, depth))
+        .collect()
 }
 
-fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
+fn effect(node: ast::Effect, tempo: f32, depth: usize) -> Result<EffectSpec, ConfigError> {
     use ast::Effect as E;
     Ok(match node {
         E::Chain { children } => {
             nesting("chain", depth)?;
-            EffectSpec::Chain(effects_at(children, depth + 1)?)
+            EffectSpec::Chain(effects_at(children, tempo, depth + 1)?)
         }
         E::Fork { children } => {
             nesting("fork", depth)?;
-            EffectSpec::Fork(effects_at(children, depth + 1)?)
+            EffectSpec::Fork(effects_at(children, tempo, depth + 1)?)
         }
         E::Pass => EffectSpec::Pass,
         E::Discard => EffectSpec::Discard,
@@ -1022,6 +1034,138 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
                 shape: crescendo_shape(shape)?,
             }
         }
+        E::Continuum {
+            rate,
+            order,
+            gate,
+            seed,
+        } => EffectSpec::Continuum {
+            rate: float_range(
+                "continuum",
+                "rate",
+                rate.map_or(12.0, |ast::Number(v)| v),
+                2.0,
+                30.0,
+            )?,
+            order: continuum_order(order)?,
+            gate: float_range(
+                "continuum",
+                "gate",
+                gate.map_or(0.5, |ast::Number(v)| v),
+                0.1,
+                0.9,
+            )?,
+            seed: seed.unwrap_or(0),
+        },
+        E::MetronomeSwarm {
+            seed,
+            bpm_lo,
+            bpm_hi,
+            max,
+            fade,
+        } => {
+            let bpm_lo = float_range(
+                "metronome-swarm",
+                "bpm-lo",
+                bpm_lo.map_or(40.0, |ast::Number(v)| v),
+                20.0,
+                400.0,
+            )?;
+            let bpm_hi = float_range(
+                "metronome-swarm",
+                "bpm-hi",
+                bpm_hi.map_or(208.0, |ast::Number(v)| v),
+                20.0,
+                400.0,
+            )?;
+            if bpm_lo > bpm_hi {
+                return Err(ConfigError::invalid(
+                    "metronome-swarm",
+                    format!("bpm-lo={bpm_lo} must not exceed bpm-hi={bpm_hi}"),
+                ));
+            }
+            EffectSpec::MetronomeSwarm {
+                seed,
+                bpm_lo,
+                bpm_hi,
+                max: bounded("metronome-swarm", "max", max.unwrap_or(24), 1, 64)?,
+                fade: float_range(
+                    "metronome-swarm",
+                    "fade",
+                    fade.map_or(0.97, |ast::Number(v)| v),
+                    0.5,
+                    1.0,
+                )?,
+            }
+        }
+        E::BrownianWalker {
+            seed,
+            interval,
+            beats,
+            sigma,
+            lo,
+            hi,
+        } => {
+            let interval = time_spec_or("brownian-walker", "interval", interval, beats, 80.0)?;
+            at_least_ms("brownian-walker", "interval", interval, tempo, 20.0)?;
+            let (lo, hi) = key_range("brownian-walker", lo, hi, DEFAULT_LO, DEFAULT_HI)?;
+            EffectSpec::BrownianWalker {
+                seed,
+                interval,
+                sigma: float_range(
+                    "brownian-walker",
+                    "sigma",
+                    sigma.map_or(2.0, |ast::Number(v)| v),
+                    0.5,
+                    12.0,
+                )?,
+                lo,
+                hi,
+            }
+        }
+        E::Mechanico {
+            pulse,
+            beats,
+            repeats,
+            jam,
+            seed,
+        } => {
+            let pulse = time_spec_or("mechanico", "pulse", pulse, beats, 150.0)?;
+            at_least_ms("mechanico", "pulse", pulse, tempo, 50.0)?;
+            EffectSpec::Mechanico {
+                pulse,
+                repeats: bounded("mechanico", "repeats", repeats.unwrap_or(16), 1, 64)?,
+                jam: float_range(
+                    "mechanico",
+                    "jam",
+                    jam.map_or(0.1, |ast::Number(v)| v),
+                    0.0,
+                    0.5,
+                )?,
+                seed: seed.unwrap_or(0),
+            }
+        }
+        E::Continuator {
+            seed,
+            idle,
+            beats,
+            max,
+        } => {
+            let idle = time_spec_or("continuator", "idle", idle, beats, 2000.0)?;
+            at_least_ms("continuator", "idle", idle, tempo, 500.0)?;
+            let max = max.unwrap_or(64);
+            if !(1..=1000).contains(&max) {
+                return Err(ConfigError::invalid(
+                    "continuator",
+                    format!("max must be within 1..=1000, got {max}"),
+                ));
+            }
+            EffectSpec::Continuator {
+                seed,
+                idle,
+                max: max as u16,
+            }
+        }
         E::Script { path, seed } => {
             if path.is_empty() {
                 return Err(ConfigError::invalid(
@@ -1121,6 +1265,28 @@ fn at_least_a_second(node: &'static str, prop: &str, time: TimeSpec) -> Result<(
             format!("{prop} must be at least 1s, got {ms}ms"),
         )),
         _ => Ok(()),
+    }
+}
+
+/// A duration floor for the generators' pulses. Unlike
+/// [`at_least_a_second`], both forms are checkable here: the tempo has
+/// already resolved, so a `beats=` value that lands under the floor is
+/// caught at parse time too.
+fn at_least_ms(
+    node: &'static str,
+    prop: &str,
+    time: TimeSpec,
+    tempo: f32,
+    min_ms: f64,
+) -> Result<(), ConfigError> {
+    let ms = time.to_nanos(tempo) as f64 / 1e6;
+    if ms >= min_ms {
+        Ok(())
+    } else {
+        Err(ConfigError::invalid(
+            node,
+            format!("{prop} must be at least {min_ms}ms, got {ms}ms"),
+        ))
     }
 }
 
@@ -1639,6 +1805,21 @@ fn gate_defer(mode: Option<String>) -> Result<bool, ConfigError> {
         Some(other) => Err(ConfigError::invalid(
             "euclidean-gate",
             format!("mode must be \"defer\" or \"drop\", got \"{other}\""),
+        )),
+    }
+}
+
+/// The order `continuum` cycles through the held keys: `"played"` (the
+/// default), `"up"`, `"down"`, or `"random"`.
+fn continuum_order(order: Option<String>) -> Result<ContinuumOrder, ConfigError> {
+    match order.as_deref() {
+        None | Some("played") => Ok(ContinuumOrder::Played),
+        Some("up") => Ok(ContinuumOrder::Up),
+        Some("down") => Ok(ContinuumOrder::Down),
+        Some("random") => Ok(ContinuumOrder::Random),
+        Some(other) => Err(ConfigError::invalid(
+            "continuum",
+            format!("order must be \"up\", \"down\", \"played\", or \"random\", got \"{other}\""),
         )),
     }
 }

@@ -4,8 +4,9 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use miditool_config::{
-    ClusterAnchor, ClusterKind, Config, CrescendoShape, EffectSpec, MpeSpec, OutputSpec, Plr,
-    RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec, parse_str,
+    ClusterAnchor, ClusterKind, Config, ContinuumOrder, CrescendoShape, EffectSpec, MpeSpec,
+    OutputSpec, Plr, RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec,
+    parse_str,
 };
 
 fn parse(text: &str) -> Config {
@@ -2580,6 +2581,411 @@ fn mass_crescendo_bad_shape_is_rejected() {
         msg.contains("sawtooth") && msg.contains("ramp") && msg.contains("arch"),
         "error should show the bad shape and the alternatives: {msg}"
     );
+}
+
+#[test]
+fn machines_example_parses_exactly() {
+    let config = parse(include_str!("../../../examples/machines.kdl"));
+    assert_eq!(
+        config,
+        Config {
+            input: Some("Roland".to_owned()),
+            hide_input: false,
+            output: OutputSpec::Virtual("miditool Machines".to_owned()),
+            tempo: 120.0,
+            remote: None,
+            scenes: vec![
+                SceneSpec {
+                    name: "continuum".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::Continuum {
+                            rate: 15.0,
+                            order: ContinuumOrder::Played,
+                            gate: 0.5,
+                            seed: 3,
+                        },
+                        EffectSpec::VelocityCurve {
+                            gamma: 0.7,
+                            floor: 1,
+                            ceiling: 110,
+                        },
+                    ],
+                },
+                SceneSpec {
+                    name: "poeme".to_owned(),
+                    kill_on_exit: true,
+                    chain: vec![
+                        EffectSpec::MetronomeSwarm {
+                            seed: 17,
+                            bpm_lo: 40.0,
+                            bpm_hi: 208.0,
+                            max: 24,
+                            fade: 0.96,
+                        },
+                        EffectSpec::FeldmanField {
+                            seed: 5,
+                            floor: 6,
+                            ceiling: 26,
+                            jitter: 3,
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+}
+
+#[test]
+fn continuum_defaults() {
+    assert_eq!(
+        parse_chain("continuum"),
+        vec![EffectSpec::Continuum {
+            rate: 12.0,
+            order: ContinuumOrder::Played,
+            gate: 0.5,
+            seed: 0,
+        }]
+    );
+}
+
+#[test]
+fn continuum_full_form() {
+    assert_eq!(
+        parse_chain("continuum rate=20 order=\"up\" gate=0.25 seed=9"),
+        vec![EffectSpec::Continuum {
+            rate: 20.0,
+            order: ContinuumOrder::Up,
+            gate: 0.25,
+            seed: 9,
+        }]
+    );
+}
+
+#[test]
+fn continuum_orders() {
+    let chain = parse_chain(
+        "continuum order=\"up\"\n\
+         continuum order=\"down\"\n\
+         continuum order=\"played\"\n\
+         continuum order=\"random\"",
+    );
+    let orders: Vec<_> = chain
+        .iter()
+        .map(|spec| match spec {
+            EffectSpec::Continuum { order, .. } => *order,
+            other => panic!("expected continuum, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        orders,
+        vec![
+            ContinuumOrder::Up,
+            ContinuumOrder::Down,
+            ContinuumOrder::Played,
+            ContinuumOrder::Random,
+        ]
+    );
+}
+
+#[test]
+fn continuum_bad_order_is_rejected() {
+    let msg = parse_err("continuum order=\"sideways\"");
+    assert!(
+        msg.contains("sideways") && msg.contains("played") && msg.contains("random"),
+        "error should show the bad order and the alternatives: {msg}"
+    );
+}
+
+#[test]
+fn continuum_range_errors() {
+    let msg = parse_err("continuum rate=1.5");
+    assert!(
+        msg.contains("continuum") && msg.contains("rate") && msg.contains("2..=30"),
+        "{msg}"
+    );
+    let msg = parse_err("continuum rate=31");
+    assert!(msg.contains("2..=30") && msg.contains("31"), "{msg}");
+    let msg = parse_err("continuum gate=0.05");
+    assert!(msg.contains("gate") && msg.contains("0.1..=0.9"), "{msg}");
+    let msg = parse_err("continuum gate=0.95");
+    assert!(msg.contains("0.1..=0.9") && msg.contains("0.95"), "{msg}");
+}
+
+#[test]
+fn metronome_swarm_defaults() {
+    assert_eq!(
+        parse_chain("metronome-swarm seed=1"),
+        vec![EffectSpec::MetronomeSwarm {
+            seed: 1,
+            bpm_lo: 40.0,
+            bpm_hi: 208.0,
+            max: 24,
+            fade: 0.97,
+        }]
+    );
+}
+
+#[test]
+fn metronome_swarm_full_form() {
+    assert_eq!(
+        parse_chain("metronome-swarm seed=2 bpm-lo=60 bpm-hi=120 max=8 fade=0.9"),
+        vec![EffectSpec::MetronomeSwarm {
+            seed: 2,
+            bpm_lo: 60.0,
+            bpm_hi: 120.0,
+            max: 8,
+            fade: 0.9,
+        }]
+    );
+}
+
+#[test]
+fn metronome_swarm_requires_a_seed() {
+    let msg = parse_err("metronome-swarm bpm-lo=60");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn metronome_swarm_range_errors() {
+    let msg = parse_err("metronome-swarm seed=1 bpm-lo=10");
+    assert!(
+        msg.contains("metronome-swarm") && msg.contains("bpm-lo") && msg.contains("20..=400"),
+        "{msg}"
+    );
+    let msg = parse_err("metronome-swarm seed=1 bpm-hi=401");
+    assert!(
+        msg.contains("bpm-hi") && msg.contains("20..=400") && msg.contains("401"),
+        "{msg}"
+    );
+    let msg = parse_err("metronome-swarm seed=1 bpm-lo=200 bpm-hi=100");
+    assert!(
+        msg.contains("bpm-lo=200") && msg.contains("bpm-hi=100"),
+        "bpm-lo must not exceed bpm-hi: {msg}"
+    );
+    let msg = parse_err("metronome-swarm seed=1 max=0");
+    assert!(msg.contains("max") && msg.contains("1..=64"), "{msg}");
+    let msg = parse_err("metronome-swarm seed=1 max=65");
+    assert!(msg.contains("1..=64") && msg.contains("65"), "{msg}");
+    let msg = parse_err("metronome-swarm seed=1 fade=0.4");
+    assert!(msg.contains("fade") && msg.contains("0.5..=1"), "{msg}");
+    let msg = parse_err("metronome-swarm seed=1 fade=1.5");
+    assert!(msg.contains("0.5..=1") && msg.contains("1.5"), "{msg}");
+}
+
+#[test]
+fn brownian_walker_defaults() {
+    assert_eq!(
+        parse_chain("brownian-walker seed=4"),
+        vec![EffectSpec::BrownianWalker {
+            seed: 4,
+            interval: TimeSpec::Millis(80.0),
+            sigma: 2.0,
+            lo: 21,
+            hi: 108,
+        }]
+    );
+}
+
+#[test]
+fn brownian_walker_full_form_with_beats() {
+    assert_eq!(
+        parse_chain("brownian-walker seed=4 beats=0.25 sigma=5 lo=36 hi=96"),
+        vec![EffectSpec::BrownianWalker {
+            seed: 4,
+            interval: TimeSpec::Beats(0.25),
+            sigma: 5.0,
+            lo: 36,
+            hi: 96,
+        }]
+    );
+}
+
+#[test]
+fn brownian_walker_requires_a_seed() {
+    let msg = parse_err("brownian-walker sigma=2.0");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn brownian_walker_interval_and_beats_are_mutually_exclusive() {
+    let msg = parse_err("brownian-walker seed=1 interval=\"80ms\" beats=0.25");
+    assert!(
+        msg.contains("interval") && msg.contains("mutually exclusive"),
+        "error should use the node's property name: {msg}"
+    );
+}
+
+#[test]
+fn brownian_walker_interval_below_20ms_is_rejected() {
+    let msg = parse_err("brownian-walker seed=1 interval=\"10ms\"");
+    assert!(
+        msg.contains("brownian-walker")
+            && msg.contains("interval")
+            && msg.contains("at least 20ms")
+            && msg.contains("10ms"),
+        "{msg}"
+    );
+    // The floor holds for the beats form too, once the tempo resolves
+    // it: a tenth of a beat at 400 bpm is 15ms.
+    let msg = parse_err("tempo 400\nbrownian-walker seed=1 beats=0.1");
+    assert!(
+        msg.contains("at least 20ms") && msg.contains("15ms"),
+        "beats resolve against the tempo before the floor: {msg}"
+    );
+}
+
+#[test]
+fn brownian_walker_range_errors() {
+    let msg = parse_err("brownian-walker seed=1 sigma=0.4");
+    assert!(
+        msg.contains("brownian-walker") && msg.contains("sigma") && msg.contains("0.5..=12"),
+        "{msg}"
+    );
+    let msg = parse_err("brownian-walker seed=1 sigma=12.5");
+    assert!(msg.contains("0.5..=12") && msg.contains("12.5"), "{msg}");
+    let msg = parse_err("brownian-walker seed=1 hi=128");
+    assert!(msg.contains("0..=127") && msg.contains("128"), "{msg}");
+    let msg = parse_err("brownian-walker seed=1 lo=61 hi=60");
+    assert!(msg.contains("lo=61"), "lo must not exceed hi: {msg}");
+}
+
+#[test]
+fn mechanico_defaults() {
+    assert_eq!(
+        parse_chain("mechanico"),
+        vec![EffectSpec::Mechanico {
+            pulse: TimeSpec::Millis(150.0),
+            repeats: 16,
+            jam: 0.1,
+            seed: 0,
+        }]
+    );
+}
+
+#[test]
+fn mechanico_full_form_with_beats() {
+    assert_eq!(
+        parse_chain("mechanico beats=0.5 repeats=4 jam=0.3 seed=7"),
+        vec![EffectSpec::Mechanico {
+            pulse: TimeSpec::Beats(0.5),
+            repeats: 4,
+            jam: 0.3,
+            seed: 7,
+        }]
+    );
+}
+
+#[test]
+fn mechanico_pulse_and_beats_are_mutually_exclusive() {
+    let msg = parse_err("mechanico pulse=\"150ms\" beats=0.5");
+    assert!(
+        msg.contains("pulse") && msg.contains("mutually exclusive"),
+        "error should use the node's property name: {msg}"
+    );
+}
+
+#[test]
+fn mechanico_pulse_below_50ms_is_rejected() {
+    let msg = parse_err("mechanico pulse=\"40ms\"");
+    assert!(
+        msg.contains("mechanico")
+            && msg.contains("pulse")
+            && msg.contains("at least 50ms")
+            && msg.contains("40ms"),
+        "{msg}"
+    );
+    // The floor holds for the beats form too: a quarter beat at 400 bpm
+    // is 37.5ms.
+    let msg = parse_err("tempo 400\nmechanico beats=0.25");
+    assert!(
+        msg.contains("at least 50ms") && msg.contains("37.5ms"),
+        "beats resolve against the tempo before the floor: {msg}"
+    );
+}
+
+#[test]
+fn mechanico_range_errors() {
+    let msg = parse_err("mechanico repeats=0");
+    assert!(
+        msg.contains("mechanico") && msg.contains("repeats") && msg.contains("1..=64"),
+        "{msg}"
+    );
+    let msg = parse_err("mechanico repeats=65");
+    assert!(msg.contains("1..=64") && msg.contains("65"), "{msg}");
+    let msg = parse_err("mechanico jam=0.6");
+    assert!(msg.contains("jam") && msg.contains("0..=0.5"), "{msg}");
+    let msg = parse_err("mechanico jam=-0.1");
+    assert!(msg.contains("0..=0.5"), "lower bound: {msg}");
+}
+
+#[test]
+fn continuator_defaults() {
+    assert_eq!(
+        parse_chain("continuator seed=1"),
+        vec![EffectSpec::Continuator {
+            seed: 1,
+            idle: TimeSpec::Millis(2000.0),
+            max: 64,
+        }]
+    );
+}
+
+#[test]
+fn continuator_full_form_with_beats() {
+    assert_eq!(
+        parse_chain("continuator seed=1 beats=4 max=100"),
+        vec![EffectSpec::Continuator {
+            seed: 1,
+            idle: TimeSpec::Beats(4.0),
+            max: 100,
+        }]
+    );
+}
+
+#[test]
+fn continuator_requires_a_seed() {
+    let msg = parse_err("continuator idle=\"2s\"");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn continuator_idle_below_500ms_is_rejected() {
+    let msg = parse_err("continuator seed=1 idle=\"400ms\"");
+    assert!(
+        msg.contains("continuator")
+            && msg.contains("idle")
+            && msg.contains("at least 500ms")
+            && msg.contains("400ms"),
+        "{msg}"
+    );
+    // The floor holds for the beats form too: half a beat at the default
+    // 120 bpm is 250ms.
+    let msg = parse_err("continuator seed=1 beats=0.5");
+    assert!(
+        msg.contains("at least 500ms") && msg.contains("250ms"),
+        "beats resolve against the tempo before the floor: {msg}"
+    );
+}
+
+#[test]
+fn continuator_max_out_of_range_is_rejected() {
+    let msg = parse_err("continuator seed=1 max=0");
+    assert!(
+        msg.contains("continuator") && msg.contains("max") && msg.contains("1..=1000"),
+        "{msg}"
+    );
+    let msg = parse_err("continuator seed=1 max=1001");
+    assert!(msg.contains("1..=1000") && msg.contains("1001"), "{msg}");
 }
 
 #[test]

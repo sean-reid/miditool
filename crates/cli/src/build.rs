@@ -3,18 +3,19 @@
 use std::path::Path;
 
 use miditool_config::{
-    ClusterAnchor, ClusterKind, CrescendoShape, EffectSpec, OutputSpec, Plr, RowForm, ShuffleMode,
-    SieveSnap, TDirection,
+    ClusterAnchor, ClusterKind, ContinuumOrder, CrescendoShape, EffectSpec, OutputSpec, Plr,
+    RowForm, ShuffleMode, SieveSnap, TDirection,
 };
 use miditool_core::graph::{Discard, Filter, Node, Pass};
 use miditool_effects::{
-    AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, Channelize, ClusterFist,
-    ComplementPad, Delay, DensityGovernor, DurationLottery, Echo, EuclideanGate, FeldmanField,
-    Just, KeyDist, Klangfarben, LooseKeys, MassCrescendo, ModeLock, NegativeHarmony, NoteRoulette,
-    OvertonePedal, PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod,
-    RowSnap, Scordatura, ShuffleLock, SieveQuantizer, SpectralHalo, Stutter, Talea, Telescope,
-    Tintinnabuli, Tonnetz, Transpose, VelDist, VelocityCurve, VelocityDice, VelocityInvert,
-    VelocityRouter, WedgeMirror,
+    AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, BrownianWalker, Channelize,
+    ClusterFist, ComplementPad, Continuator, Continuum, Delay, DensityGovernor, DurationLottery,
+    Echo, EuclideanGate, FeldmanField, Just, KeyDist, Klangfarben, LooseKeys, MassCrescendo,
+    Mechanico, MetronomeSwarm, ModeLock, NegativeHarmony, NoteRoulette, OvertonePedal,
+    PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowSnap,
+    Scordatura, ShuffleLock, SieveQuantizer, SpectralHalo, Stutter, Talea, Telescope, Tintinnabuli,
+    Tonnetz, Transpose, VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter,
+    WedgeMirror,
 };
 use miditool_io::OutputTarget;
 
@@ -394,6 +395,53 @@ fn build_node(spec: EffectSpec, tempo: f32, base: &Path) -> Result<Node, String>
                 crescendo_shape(shape),
             )))
         }
+        EffectSpec::Continuum {
+            rate,
+            order,
+            gate,
+            seed,
+        } => Node::Leaf(Box::new(Continuum::new(
+            rate,
+            continuum_order(order),
+            gate,
+            seed,
+        ))),
+        EffectSpec::MetronomeSwarm {
+            seed,
+            bpm_lo,
+            bpm_hi,
+            max,
+            fade,
+        } => Node::Leaf(Box::new(MetronomeSwarm::new(
+            seed, bpm_lo, bpm_hi, max, fade,
+        ))),
+        EffectSpec::BrownianWalker {
+            seed,
+            interval,
+            sigma,
+            lo,
+            hi,
+        } => Node::Leaf(Box::new(BrownianWalker::new(
+            seed,
+            interval.to_nanos(tempo),
+            sigma,
+            lo,
+            hi,
+        ))),
+        EffectSpec::Mechanico {
+            pulse,
+            repeats,
+            jam,
+            seed,
+        } => Node::Leaf(Box::new(Mechanico::new(
+            pulse.to_nanos(tempo),
+            repeats,
+            jam,
+            seed,
+        ))),
+        EffectSpec::Continuator { seed, idle, max } => {
+            Node::Leaf(Box::new(Continuator::new(seed, idle.to_nanos(tempo), max)))
+        }
         EffectSpec::Script { path, seed } => {
             let resolved = base.join(&path);
             let effect = miditool_script::ScriptEffect::from_file(&resolved, seed)
@@ -425,6 +473,15 @@ fn mpe_params(mpe: miditool_config::MpeSpec) -> miditool_effects::MpeParams {
         lo: mpe.lo,
         hi: mpe.hi,
         bend_range: mpe.bend_range,
+    }
+}
+
+fn continuum_order(order: ContinuumOrder) -> miditool_effects::ContinuumOrder {
+    match order {
+        ContinuumOrder::Up => miditool_effects::ContinuumOrder::Up,
+        ContinuumOrder::Down => miditool_effects::ContinuumOrder::Down,
+        ContinuumOrder::Played => miditool_effects::ContinuumOrder::Played,
+        ContinuumOrder::Random => miditool_effects::ContinuumOrder::Random,
     }
 }
 

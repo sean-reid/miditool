@@ -155,6 +155,30 @@ effects
   (channels=, written 1-16) with a per-note pitch bend, so the
   receiving instrument must be in MPE mode with its pitch-bend range
   matching bend-range=. They belong at the end of a chain.
+  continuum rate=12.0 order=\"played\" gate=0.5 seed=0
+      Ligeti's Continuum: the keys you hold cycle as a stream of rate
+      notes per second, in \"up\", \"down\", \"played\", or \"random\" order,
+      each note sounding for gate of its slot; the blur replaces the
+      held notes themselves.
+  metronome-swarm seed=<u64> bpm-lo=40 bpm-hi=208 max=24 fade=0.97
+      The Poeme symphonique: every note winds up an independent
+      metronome ticking that key at a seeded tempo in bpm-lo..bpm-hi,
+      each tick fade times softer, running down after at most max.
+  brownian-walker seed=<u64> interval=\"80ms\" sigma=2.0 lo=21 hi=108
+      Each held note releases a walker: every interval it steps a
+      Gaussian sigma semitones and sounds where it lands, fenced into
+      lo..hi, until the note-off calls it home.
+  mechanico pulse=\"150ms\" repeats=16 jam=0.1 seed=0
+      Ligeti's mechanico: notes latch onto a relentless pulse grid and
+      restrike up to repeats times, except a seeded jam share of pulses
+      that stick or drop; the machine grinds on regardless.
+  continuator seed=<u64> idle=\"2s\" max=64
+      Listens while you play; fall silent for idle and it answers with
+      a seeded walk over what it heard, up to max notes or until you
+      touch a key again.
+  The five above are generators: once set going they keep playing on
+  their own (consuming the triggering notes where noted), and a scene
+  switch stops them cleanly.
   poisson-cloud seed=<u64> density=8.0 duration=\"2s\" sigma=7.0 vel-sigma=10.0 max=16
       Each note-on sprays a seeded cloud of grains: density grains per
       second for the duration, pitches and velocities spread Gaussian

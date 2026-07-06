@@ -1,0 +1,29 @@
+// Two machines set going from the keyboard: Ligeti's Continuum, where
+// held keys blur into a stream faster than fingers, and the Poeme
+// symphonique, a room full of wound-up metronomes each ticking itself
+// out.
+//
+// Everything random is seeded, so the same playing gives the same music.
+
+input "Roland"
+output virtual="miditool Machines"
+
+tempo 120
+
+// Hold a chord and it becomes the pattern: the held keys cycle at 15
+// notes a second in the order you pressed them, each note sounding for
+// half its slot; the curve underneath lifts the blur so the stream
+// stays present at speed.
+scene "continuum" {
+    continuum rate=15.0 order="played" gate=0.5 seed=3
+    velocity-curve gamma=0.7 ceiling=110
+}
+
+// Every key winds up its own metronome at some tempo between largo and
+// prestissimo, ticking that note softer and softer until it dies; the
+// Feldman field sinks the whole room toward a whisper. switch="kill"
+// silences the swarm the moment you leave.
+scene "poeme" switch="kill" {
+    metronome-swarm seed=17 bpm-lo=40 bpm-hi=208 max=24 fade=0.96
+    feldman-field seed=5 floor=6 ceiling=26 jitter=3
+}

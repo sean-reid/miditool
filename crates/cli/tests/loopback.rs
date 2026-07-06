@@ -179,3 +179,74 @@ fn echoes_arrive_on_schedule() {
     drop(msgs);
     engine.stop().expect("stop engine");
 }
+
+#[test]
+fn continuum_runs_on_its_own_and_stops() {
+    let mut keyboard = open_output(&OutputTarget::Virtual("miditool gen kb".into()))
+        .expect("create fake keyboard");
+
+    // A brisk continuum so the test stays short: 20 notes per second.
+    let (engine, _handle) = Engine::run(
+        Some("miditool gen kb"),
+        &OutputTarget::Virtual("miditool gen out".into()),
+        one_scene(),
+        Box::new(|_| {
+            Ok(Node::Leaf(Box::new(miditool_effects::Continuum::new(
+                20.0,
+                miditool_effects::ContinuumOrder::Up,
+                0.5,
+                1,
+            ))))
+        }),
+        None,
+    )
+    .expect("start engine");
+
+    type Arrivals = Arc<Mutex<Vec<Vec<u8>>>>;
+    let received: Arrivals = Arc::default();
+    let sink = Arc::clone(&received);
+    let _capture = open_input(Some("miditool gen out"), move |_stamp, bytes| {
+        sink.lock().unwrap().push(bytes.to_vec());
+    })
+    .expect("open capture");
+    sleep(Duration::from_millis(300));
+
+    // Hold two keys; the machine should cycle them with no further input.
+    keyboard.send(&[0x90, 60, 90]).unwrap();
+    keyboard.send(&[0x90, 64, 90]).unwrap();
+    assert!(
+        wait_for(|| {
+            received
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| m[0] == 0x90)
+                .count()
+                >= 6
+        }),
+        "the machine should keep emitting while keys are held, got {:?}",
+        received.lock().unwrap()
+    );
+
+    // Release both; the machine winds down and the stream balances.
+    keyboard.send(&[0x80, 60, 0]).unwrap();
+    keyboard.send(&[0x80, 64, 0]).unwrap();
+    sleep(Duration::from_millis(250));
+    let before = received.lock().unwrap().len();
+    sleep(Duration::from_millis(300));
+    let after = received.lock().unwrap().len();
+    assert_eq!(before, after, "the machine must stop after release");
+
+    let msgs = received.lock().unwrap();
+    let ons = msgs
+        .iter()
+        .filter(|m| m[0] & 0xF0 == 0x90 && m[2] > 0)
+        .count();
+    let offs = msgs
+        .iter()
+        .filter(|m| m[0] & 0xF0 == 0x80 || (m[0] & 0xF0 == 0x90 && m[2] == 0))
+        .count();
+    assert_eq!(ons, offs, "every machine note must end");
+    drop(msgs);
+    engine.stop().expect("stop engine");
+}

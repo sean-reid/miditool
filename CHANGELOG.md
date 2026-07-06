@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/sean-reid/miditool/compare/v0.1.8...v0.1.9) (2026-07-06)
+
+
+### Bug Fixes
+
+* defer release pr generation until the previous release is tagged ([337f9d5](https://github.com/sean-reid/miditool/commit/337f9d512967efab6012c321f5eacf04fdec45eb))
+
 ## [0.1.8](https://github.com/sean-reid/miditool/compare/v0.1.7...v0.1.8) (2026-07-06)
 
 

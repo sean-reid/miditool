@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/sean-reid/miditool/compare/v0.1.9...v0.1.10) (2026-07-06)
+
+
+### Bug Fixes
+
+* cargo-dist creates the tag and release atomically with the binaries ([56bfbe4](https://github.com/sean-reid/miditool/commit/56bfbe4c9fec4e84c667ae9e36fde9e9cc9f8788))
+
 ## [0.1.9](https://github.com/sean-reid/miditool/compare/v0.1.8...v0.1.9) (2026-07-06)
 
 

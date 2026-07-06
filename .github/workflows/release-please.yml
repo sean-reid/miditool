@@ -3,6 +3,9 @@ name: release-please
 on:
   push:
     branches: [main]
+  # Manual refresh: a release PR generated while the previous release was
+  # still a building draft shows a full-history changelog until rerun.
+  workflow_dispatch:
 
 permissions:
   contents: write

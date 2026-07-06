@@ -8,14 +8,15 @@ use miditool_core::{
     Effect, Event, EventBuf, EventKind, MAX_FANOUT, Node, NoteTracker, ProcCx, Sieve,
 };
 use miditool_effects::{
-    AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, Channelize, ClusterAnchor,
-    ClusterFist, ClusterKind, ComplementPad, CrescendoShape, Delay, DensityGovernor,
-    DurationLottery, Echo, EuclideanGate, FeldmanField, Just as JustIntonation, KeyDist,
-    Klangfarben, LooseKeys, MassCrescendo, ModeLock, MpeParams, NegativeHarmony, NoteRoulette,
-    OvertonePedal, Plr, PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod,
-    RowForm, RowSnap, Scordatura, ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap,
-    SpectralHalo, Stutter, TDirection, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose, VelDist,
-    VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
+    AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, BrownianWalker, Channelize,
+    ClusterAnchor, ClusterFist, ClusterKind, ComplementPad, Continuator, Continuum, ContinuumOrder,
+    CrescendoShape, Delay, DensityGovernor, DurationLottery, Echo, EuclideanGate, FeldmanField,
+    Just as JustIntonation, KeyDist, Klangfarben, LooseKeys, MassCrescendo, Mechanico,
+    MetronomeSwarm, ModeLock, MpeParams, NegativeHarmony, NoteRoulette, OvertonePedal, Plr,
+    PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowForm, RowSnap,
+    Scordatura, ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap, SpectralHalo, Stutter,
+    TDirection, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose, VelDist, VelocityCurve,
+    VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
 };
 use proptest::prelude::*;
 
@@ -100,6 +101,15 @@ fn anchors() -> impl Strategy<Value = ClusterAnchor> {
     ]
 }
 
+fn continuum_orders() -> impl Strategy<Value = ContinuumOrder> {
+    prop_oneof![
+        Just(ContinuumOrder::Up),
+        Just(ContinuumOrder::Down),
+        Just(ContinuumOrder::Played),
+        Just(ContinuumOrder::Random),
+    ]
+}
+
 fn rows() -> impl Strategy<Value = [u8; 12]> {
     Just((0u8..12).collect::<Vec<u8>>())
         .prop_shuffle()
@@ -181,6 +191,45 @@ fn assert_no_orphans_kinds(node: &mut Node, kinds: &[EventKind]) {
 fn assert_no_orphans(node: &mut Node, steps: &[Step]) {
     let kinds: Vec<EventKind> = steps.iter().map(step_kind).collect();
     assert_no_orphans_kinds(node, &kinds);
+}
+
+/// Tick-aware harness for the free-running generators: each event lands
+/// at an increasing timestamp with tick calls between events and a stretch
+/// of trailing ticks afterward (long enough to wake idle-triggered voices
+/// and run down repeat counts), then a flush. Every note the effect
+/// emitted must balance per (channel, key).
+fn assert_no_orphans_ticked(node: &mut Node, steps: &[Step]) {
+    fn drive(node: &mut Node, tracker: &mut NoteTracker, now: u64, ev: Option<EventKind>) {
+        let cx = ProcCx::at(now);
+        let mut out = EventBuf::new();
+        match ev {
+            Some(kind) => node.process(&Event::new(now, kind), &mut out, &cx),
+            None => node.tick(now, &mut out, &cx),
+        }
+        for e in &out {
+            tracker.observe(&e.kind);
+        }
+    }
+    let mut tracker = NoteTracker::new();
+    let mut now: u64 = 0;
+    for step in steps {
+        // Irregular but deterministic spacing, up to about 1.2 seconds.
+        now += 1_000_000 + step.vel as u64 * 9_000_000;
+        drive(node, &mut tracker, now, Some(step_kind(step)));
+        now += 2_000_000 + step.key as u64 * 500_000;
+        drive(node, &mut tracker, now, None);
+    }
+    for _ in 0..12 {
+        now += 800_000_000;
+        drive(node, &mut tracker, now, None);
+    }
+    let cx = ProcCx::at(now);
+    let mut out = EventBuf::new();
+    node.flush(&mut out, &cx);
+    for e in &out {
+        tracker.observe(&e.kind);
+    }
+    assert_eq!(tracker.active(), 0, "orphaned notes at the output");
 }
 
 fn leaf(fx: impl Effect + 'static) -> Node {
@@ -657,6 +706,71 @@ proptest! {
         vel: u8,
     ) {
         assert_no_orphans(&mut leaf(ComplementPad::new(lo, hi, vel)), &steps);
+    }
+
+    // The tick-aware generators run on raw sequences: they consume the
+    // player's notes (Continuator excepted, whose flush winds down the
+    // pass-through) and every voice they start is either a self-contained
+    // pair or released from their own bookkeeping by tick or flush.
+    #[test]
+    fn continuum_no_orphans(
+        steps in steps(),
+        seed: u64,
+        rate in 0.0f32..=60.0,
+        gate in 0.0f32..=2.0,
+        order in continuum_orders(),
+    ) {
+        let fx = Continuum::new(rate, order, gate, seed);
+        assert_no_orphans_ticked(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn metronome_swarm_no_orphans(
+        steps in steps(),
+        seed: u64,
+        bpm_lo in 0.0f32..=500.0,
+        bpm_hi in 0.0f32..=500.0,
+        max_repeats in 0u8..=80,
+        fade in 0.0f32..=1.5,
+    ) {
+        let fx = MetronomeSwarm::new(seed, bpm_lo, bpm_hi, max_repeats, fade);
+        assert_no_orphans_ticked(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn brownian_walker_no_orphans(
+        steps in steps(),
+        seed: u64,
+        interval in 0u64..=300_000_000,
+        sigma in 0.0f32..=20.0,
+        lo in 0u8..128,
+        hi in 0u8..128,
+    ) {
+        let fx = BrownianWalker::new(seed, interval, sigma, lo, hi);
+        assert_no_orphans_ticked(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn mechanico_no_orphans(
+        steps in steps(),
+        seed: u64,
+        pulse in 0u64..=400_000_000,
+        repeats in 0u8..=80,
+        jam in 0.0f32..=1.0,
+    ) {
+        let fx = Mechanico::new(pulse, repeats, jam, seed);
+        assert_no_orphans_ticked(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn continuator_no_orphans(
+        steps in steps(),
+        seed: u64,
+        idle in 0u64..=3_000_000_000,
+        max_notes in 0u16..=1200,
+    ) {
+        let fx = Continuator::new(seed, idle, max_notes);
+        assert_no_orphans_ticked(&mut leaf(fx), &steps);
     }
 
     // Raw sequences for the MPE effects: the pool's steal-offs, the

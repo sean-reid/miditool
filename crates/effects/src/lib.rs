@@ -22,9 +22,12 @@ pub mod added_value;
 pub mod aggregate_gate;
 pub mod anti_accent;
 pub mod blocked_keys;
+pub mod brownian_walker;
 pub mod channelize;
 pub mod cluster_fist;
 pub mod complement_pad;
+pub mod continuator;
+pub mod continuum;
 pub mod delay;
 pub mod density_governor;
 pub mod duration_lottery;
@@ -35,6 +38,8 @@ pub mod just;
 pub mod klangfarben;
 pub mod loose_keys;
 pub mod mass_crescendo;
+pub mod mechanico;
+pub mod metronome_swarm;
 pub mod mode_lock;
 pub mod negative_harmony;
 pub mod note_roulette;
@@ -67,9 +72,12 @@ pub use added_value::AddedValue;
 pub use aggregate_gate::AggregateGate;
 pub use anti_accent::AntiAccent;
 pub use blocked_keys::BlockedKeys;
+pub use brownian_walker::BrownianWalker;
 pub use channelize::Channelize;
 pub use cluster_fist::{ClusterAnchor, ClusterFist, ClusterKind};
 pub use complement_pad::ComplementPad;
+pub use continuator::Continuator;
+pub use continuum::{Continuum, ContinuumOrder};
 pub use delay::Delay;
 pub use density_governor::DensityGovernor;
 pub use duration_lottery::DurationLottery;
@@ -80,6 +88,8 @@ pub use just::Just;
 pub use klangfarben::Klangfarben;
 pub use loose_keys::{KeyDist, LooseKeys};
 pub use mass_crescendo::{CrescendoShape, MassCrescendo};
+pub use mechanico::Mechanico;
+pub use metronome_swarm::MetronomeSwarm;
 pub use mode_lock::ModeLock;
 pub use mpe::MpeParams;
 pub use negative_harmony::NegativeHarmony;
@@ -126,6 +136,15 @@ pub(crate) mod testutil {
         let cx = ProcCx::at(time);
         let mut out = EventBuf::new();
         fx.process(&Event::new(time, kind), &mut out, &cx);
+        out.iter().copied().collect()
+    }
+
+    /// Advance an effect's clock to `now` and collect the outputs,
+    /// timestamps included.
+    pub(crate) fn tick(fx: &mut impl Effect, now: u64) -> Vec<Event> {
+        let cx = ProcCx::at(now);
+        let mut out = EventBuf::new();
+        fx.tick(now, &mut out, &cx);
         out.iter().copied().collect()
     }
 

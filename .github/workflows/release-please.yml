@@ -51,6 +51,26 @@ jobs:
           else
             echo "skip_pr=false" >> "$GITHUB_OUTPUT"
           fi
+      # With skip-github-release, release-please never marks a merged
+      # release PR as tagged, and it will not open the next release PR
+      # while one looks pending. cargo-dist creates the tag, so flip the
+      # label ourselves once that tag exists.
+      - name: Mark externally tagged release PRs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr list --repo "$GITHUB_REPOSITORY" --state closed \
+            --label "autorelease: pending" --json number,title,mergedAt \
+            -q '.[] | select(.mergedAt != null) | (.number|tostring) + " " + .title' |
+          while read -r num title; do
+            version=$(printf '%s' "$title" | sed -nE 's/^chore\(main\): release ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
+            [ -n "$version" ] || continue
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version" >/dev/null 2>&1; then
+              gh pr edit "$num" --repo "$GITHUB_REPOSITORY" \
+                --remove-label "autorelease: pending" --add-label "autorelease: tagged"
+              echo "marked #$num (v$version) as tagged"
+            fi
+          done
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: rp
         with:

@@ -15,8 +15,6 @@ on:
 
 permissions:
   contents: write
-  # Dispatching release-please below needs to start a workflow.
-  actions: write
 
 jobs:
   publish:
@@ -34,9 +32,3 @@ jobs:
           fi
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           echo "published $tag"
-      # The tag now exists, so release PR generation (skipped while the
-      # draft was building) can run against a real boundary.
-      - name: Refresh the next release pull request
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run release-please.yml --repo "$GITHUB_REPOSITORY"

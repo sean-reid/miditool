@@ -3,9 +3,13 @@ name: release-please
 on:
   push:
     branches: [main]
-  # Manual refresh: a release PR generated while the previous release was
-  # still a building draft shows a full-history changelog until rerun.
+  # Manual refresh, plus the automatic one: when the Release pipeline
+  # finishes (publishing the draft and creating its tag), rerun so the
+  # deferred release PR is generated against a real boundary.
   workflow_dispatch:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
 
 permissions:
   contents: write
@@ -16,6 +20,7 @@ permissions:
 
 jobs:
   release-please:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       prs_created: ${{ steps.rp.outputs.prs_created }}

@@ -10,11 +10,12 @@ use miditool_core::{
 use miditool_effects::{
     AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, Channelize, ClusterAnchor,
     ClusterFist, ClusterKind, ComplementPad, CrescendoShape, Delay, DensityGovernor,
-    DurationLottery, Echo, EuclideanGate, FeldmanField, KeyDist, Klangfarben, LooseKeys,
-    MassCrescendo, ModeLock, NegativeHarmony, NoteRoulette, Plr, PoissonCloud, Quantize,
-    RegistralScatter, ResonanceHalo, Restrike, RingMod, RowForm, RowSnap, ShuffleLock, ShuffleMode,
-    SieveQuantizer, SieveSnap, Stutter, TDirection, Talea, Telescope, Tintinnabuli, Tonnetz,
-    Transpose, VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
+    DurationLottery, Echo, EuclideanGate, FeldmanField, Just as JustIntonation, KeyDist,
+    Klangfarben, LooseKeys, MassCrescendo, ModeLock, MpeParams, NegativeHarmony, NoteRoulette,
+    OvertonePedal, Plr, PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod,
+    RowForm, RowSnap, Scordatura, ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap,
+    SpectralHalo, Stutter, TDirection, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose, VelDist,
+    VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
 };
 use proptest::prelude::*;
 
@@ -657,6 +658,74 @@ proptest! {
     ) {
         assert_no_orphans(&mut leaf(ComplementPad::new(lo, hi, vel)), &steps);
     }
+
+    // Raw sequences for the MPE effects: the pool's steal-offs, the
+    // per-note records, and the flush (dry offs, pool offs, bend resets)
+    // must balance every note-on the pool or the dry path emitted. The
+    // tracker sees pool note-ons and note-offs as ordinary events and
+    // ignores the pitch bends.
+    #[test]
+    fn spectral_halo_no_orphans(
+        steps in steps(),
+        partials in 0u8..=12,
+        rolloff in 0.0f32..=1.5,
+        stretch in 0.0f32..=4.0,
+        lo in 0u8..16,
+        hi in 0u8..16,
+        bend_range in 1.0f32..=96.0,
+    ) {
+        let fx = SpectralHalo::new(partials, rolloff, stretch, MpeParams { lo, hi, bend_range });
+        assert_no_orphans(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn just_no_orphans(
+        steps in steps(),
+        root_pc: u8,
+        lo in 0u8..16,
+        hi in 0u8..16,
+        bend_range in 1.0f32..=96.0,
+    ) {
+        let fx = JustIntonation::new(root_pc, MpeParams { lo, hi, bend_range });
+        assert_no_orphans(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn scordatura_no_orphans(
+        steps in steps(),
+        cents in prop::array::uniform12(-200i16..=200),
+        lo in 0u8..16,
+        hi in 0u8..16,
+        bend_range in 1.0f32..=96.0,
+    ) {
+        let fx = Scordatura::new(cents, MpeParams { lo, hi, bend_range });
+        assert_no_orphans(&mut leaf(fx), &steps);
+    }
+
+    // The pedal goes down on both input channels first and lifts on
+    // channel 0 midway, so notes snap, pass dry, and cross a pedal move
+    // between their on and off; the per-note records keep every path
+    // balanced.
+    #[test]
+    fn overtone_pedal_no_orphans(
+        steps in steps(),
+        fundamental in 0u8..128,
+        max_partial in 0u8..=40,
+        lo in 0u8..16,
+        hi in 0u8..16,
+        bend_range in 1.0f32..=96.0,
+    ) {
+        let mut kinds = vec![
+            EventKind::ControlChange { ch: 0, cc: CC_SUSTAIN, value: 127 },
+            EventKind::ControlChange { ch: 1, cc: CC_SUSTAIN, value: 127 },
+        ];
+        let half = steps.len() / 2;
+        kinds.extend(steps[..half].iter().map(step_kind));
+        kinds.push(EventKind::ControlChange { ch: 0, cc: CC_SUSTAIN, value: 0 });
+        kinds.extend(steps[half..].iter().map(step_kind));
+        let fx = OvertonePedal::new(fundamental, max_partial, MpeParams { lo, hi, bend_range });
+        assert_no_orphans_kinds(&mut leaf(fx), &kinds);
+    }
 }
 
 /// Chain-stage truncation must never split a self-contained on/off pair.
@@ -1011,5 +1080,76 @@ fn harmonizer_worst_case_fanout_fits_the_buffer() {
         cx.dropped.load(Ordering::Relaxed),
         0,
         "complement_pad: dropped"
+    );
+}
+
+/// The widest configuration of each MPE microtonal effect, fed a note-on
+/// and then a retrigger of the same key, must fan out within one EventBuf
+/// and drop nothing. Each pool voice is two events (bend then on), so the
+/// halo's worst note-on is 1 dry note plus 7 voices, 15 events; the
+/// single-voice effects emit 2, plus the cut(s) on retrigger.
+#[test]
+fn mpe_worst_case_fanout_fits_the_buffer() {
+    let mpe = MpeParams {
+        lo: 1,
+        hi: 15,
+        bend_range: 48.0,
+    };
+    let on = Event::new(
+        0,
+        EventKind::NoteOn {
+            ch: 0,
+            key: 60,
+            vel: 127,
+        },
+    );
+    let cases: Vec<(&str, Box<dyn Effect>, usize, usize)> = vec![
+        (
+            "spectral_halo",
+            Box::new(SpectralHalo::new(8, 1.0, 1.0, mpe)),
+            15,
+            8 + 15,
+        ),
+        ("just", Box::new(JustIntonation::new(0, mpe)), 2, 1 + 2),
+        (
+            "scordatura",
+            Box::new(Scordatura::new([50; 12], mpe)),
+            2,
+            1 + 2,
+        ),
+    ];
+    for (name, mut fx, first, retrigger) in cases {
+        let cx = ProcCx::at(0);
+        let mut out = EventBuf::new();
+        fx.process(&on, &mut out, &cx);
+        assert_eq!(out.len(), first, "{name}: note-on fanout");
+        out.clear();
+        fx.process(&on, &mut out, &cx);
+        assert_eq!(out.len(), retrigger, "{name}: retrigger fanout");
+        assert!(out.len() <= MAX_FANOUT, "{name}: over MAX_FANOUT");
+        assert_eq!(cx.dropped.load(Ordering::Relaxed), 0, "{name}: dropped");
+    }
+
+    // The overtone pedal snaps only under the pedal: key 60 is one octave
+    // over the fundamental, exactly partial 2.
+    let mut fx = OvertonePedal::new(48, 32, mpe);
+    let cx = ProcCx::at(0);
+    let mut out = EventBuf::new();
+    let pedal = EventKind::ControlChange {
+        ch: 0,
+        cc: CC_SUSTAIN,
+        value: 127,
+    };
+    fx.process(&Event::new(0, pedal), &mut out, &cx);
+    out.clear();
+    fx.process(&on, &mut out, &cx);
+    assert_eq!(out.len(), 2, "overtone_pedal: note-on fanout");
+    out.clear();
+    fx.process(&on, &mut out, &cx);
+    assert_eq!(out.len(), 1 + 2, "overtone_pedal: retrigger fanout");
+    assert_eq!(
+        cx.dropped.load(Ordering::Relaxed),
+        0,
+        "overtone_pedal: dropped"
     );
 }

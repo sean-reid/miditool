@@ -156,6 +156,7 @@ mod tests {
             scenes,
             Box::new(|idx| Ok(Node::Leaf(Box::new(Transpose::new(12 * idx as i16))))),
             None,
+            None,
         )
         .expect("start engine");
 

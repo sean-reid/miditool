@@ -179,6 +179,18 @@ effects
   The five above are generators: once set going they keep playing on
   their own (consuming the triggering notes where noted), and a scene
   switch stops them cleanly.
+  crippled-looper seed=<u64> pedal=64 max=16
+      Feldman's crippled symmetry as a looper: hold the pedal (CC
+      pedal=, default the sustain pedal) to record up to max notes,
+      release to set the phrase circling; each pass warps one seeded
+      detail, so the loop never repeats and never settles.
+  retrograde pedal=64 speed=1.0
+      A palindrome pedal: hold the pedal (CC pedal=) to record, release
+      to hear the phrase played backwards at speed (0.25-4.0) times the
+      recorded pace.
+  The two above are form effects, driven by a pedal rather than the
+  keys: the pedal CC bounds the phrase, and what was played comes back
+  transformed.
   poisson-cloud seed=<u64> density=8.0 duration=\"2s\" sigma=7.0 vel-sigma=10.0 max=16
       Each note-on sprays a seeded cloud of grains: density grains per
       second for the duration, pitches and velocities spread Gaussian
@@ -282,6 +294,7 @@ config file shape
   output virtual=\"miditool Out\"    default; or output device=\"IAC\"
   tempo 120                          default; beats per minute for beats=
   remote port=8320 bind=\"0.0.0.0\"  optional; phone/tablet web remote
+  control { ... }                    optional; key gestures + moments
   ...effects...                      top level is an implicit chain
   scene \"name\" { ...effects... }    or: one or more named scenes
 
@@ -290,6 +303,22 @@ its own chain, and switch=\"kill\" cuts sounding notes when you leave it
 (the default, switch=\"let-ring\", lets them ring out). The remote serves
 a scene switcher to browsers on the given port; without bind= it stays
 on this machine, and bind=\"0.0.0.0\" opens it to the local network.
+
+The control block reserves keyboard keys as performance gestures:
+
+  control {
+      next-scene key=108             step forward through the scenes
+      prev-scene key=107             step back
+      goto key=21 scene=\"clouds\"     jump to a scene; repeatable
+      panic key=20                   flush and silence everything
+      moments dwell-lo=\"20s\" dwell-hi=\"90s\" seed=7
+  }
+
+Keys are MIDI key numbers 0..127, one role per key; pick keys your
+music does not need. moments hands scene changes to a seeded clock
+that dwells somewhere in dwell-lo..dwell-hi (plain durations, each at
+least 2s) before drifting on. Gestures resolve to scene positions at
+startup; a live config reload does not re-resolve them.
 
 Any time-measuring property (time=, interval=, duration=, and so on)
 takes \"250ms\" or \"1.5s\", or beats=0.5 against the tempo. Note-valued

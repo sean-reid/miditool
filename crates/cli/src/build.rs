@@ -9,13 +9,13 @@ use miditool_config::{
 use miditool_core::graph::{Discard, Filter, Node, Pass};
 use miditool_effects::{
     AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, BrownianWalker, Channelize,
-    ClusterFist, ComplementPad, Continuator, Continuum, Delay, DensityGovernor, DurationLottery,
-    Echo, EuclideanGate, FeldmanField, Just, KeyDist, Klangfarben, LooseKeys, MassCrescendo,
-    Mechanico, MetronomeSwarm, ModeLock, NegativeHarmony, NoteRoulette, OvertonePedal,
-    PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowSnap,
-    Scordatura, ShuffleLock, SieveQuantizer, SpectralHalo, Stutter, Talea, Telescope, Tintinnabuli,
-    Tonnetz, Transpose, VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter,
-    WedgeMirror,
+    ClusterFist, ComplementPad, Continuator, Continuum, CrippledLooper, Delay, DensityGovernor,
+    DurationLottery, Echo, EuclideanGate, FeldmanField, Just, KeyDist, Klangfarben, LooseKeys,
+    MassCrescendo, Mechanico, MetronomeSwarm, ModeLock, NegativeHarmony, NoteRoulette,
+    OvertonePedal, PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike,
+    RetrogradeBuffer, RingMod, RowSnap, Scordatura, ShuffleLock, SieveQuantizer, SpectralHalo,
+    Stutter, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose, VelDist, VelocityCurve,
+    VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
 };
 use miditool_io::OutputTarget;
 
@@ -442,6 +442,12 @@ fn build_node(spec: EffectSpec, tempo: f32, base: &Path) -> Result<Node, String>
         EffectSpec::Continuator { seed, idle, max } => {
             Node::Leaf(Box::new(Continuator::new(seed, idle.to_nanos(tempo), max)))
         }
+        EffectSpec::CrippledLooper { seed, pedal, max } => {
+            Node::Leaf(Box::new(CrippledLooper::new(seed, pedal, max)))
+        }
+        EffectSpec::Retrograde { pedal, speed } => {
+            Node::Leaf(Box::new(RetrogradeBuffer::new(pedal, speed)))
+        }
         EffectSpec::Script { path, seed } => {
             let resolved = base.join(&path);
             let effect = miditool_script::ScriptEffect::from_file(&resolved, seed)
@@ -555,6 +561,42 @@ fn sieve_snap(snap: SieveSnap) -> miditool_effects::SieveSnap {
     }
 }
 
+/// Assemble the engine's control definition from the config's `control`
+/// block: goto scene names resolve to indices against the startup scene
+/// list (the config already validated they exist), and the moments
+/// dwells resolve against the tempo.
+///
+/// Resolution happens once, here. A live reload rebuilds scene graphs
+/// but does not re-resolve gestures: in v1 they keep their original
+/// indices, so a reload that reorders or renames scenes leaves
+/// next/prev/goto pointing at the old positions until a restart, as
+/// documented on `miditool_config::ControlSpec`.
+pub fn control_def(
+    spec: miditool_config::ControlSpec,
+    scenes: &[miditool_config::SceneSpec],
+    tempo: f32,
+) -> Result<miditool_engine::ControlDef, String> {
+    let mut gotos = Vec::with_capacity(spec.gotos.len());
+    for (key, name) in spec.gotos {
+        let idx = scenes
+            .iter()
+            .position(|s| s.name == name)
+            .ok_or_else(|| format!("control: goto names an unknown scene \"{name}\""))?;
+        gotos.push((key, idx));
+    }
+    Ok(miditool_engine::ControlDef {
+        next_scene: spec.next_scene,
+        prev_scene: spec.prev_scene,
+        gotos,
+        panic_key: spec.panic_key,
+        moments: spec.moments.map(|m| miditool_engine::MomentsDef {
+            dwell_lo_ns: m.dwell_lo.to_nanos(tempo),
+            dwell_hi_ns: m.dwell_hi.to_nanos(tempo),
+            seed: m.seed,
+        }),
+    })
+}
+
 pub fn output_target(spec: OutputSpec) -> OutputTarget {
     match spec {
         OutputSpec::Virtual(name) => OutputTarget::Virtual(name),
@@ -652,6 +694,7 @@ end
                 kill_on_exit: false,
             }],
             Box::new(move |_| build_graph(chain.clone(), 120.0, &base)),
+            None,
             None,
         )
         .expect("start engine");

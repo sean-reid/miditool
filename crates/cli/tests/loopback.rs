@@ -73,6 +73,7 @@ fn transposes_notes_end_to_end() {
         one_scene(),
         Box::new(|_| Ok(Node::Leaf(Box::new(Transpose::new(12))))),
         None,
+        None,
     )
     .expect("start engine");
 
@@ -138,6 +139,7 @@ fn echoes_arrive_on_schedule() {
             ))))
         }),
         None,
+        None,
     )
     .expect("start engine");
 
@@ -198,6 +200,7 @@ fn continuum_runs_on_its_own_and_stops() {
                 1,
             ))))
         }),
+        None,
         None,
     )
     .expect("start engine");

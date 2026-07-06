@@ -199,6 +199,18 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         _ => PathBuf::from("."),
     };
 
+    // Control gestures resolve against the startup scene list, once.
+    // The reloader below rebuilds scene graphs on config edits, but in
+    // v1 gestures keep these original indices: a reload that reorders
+    // or renames scenes leaves next/prev/goto pointing at the old
+    // positions until a restart.
+    let control = cfg
+        .control
+        .clone()
+        .map(|spec| build::control_def(spec, &cfg.scenes, cfg.tempo))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!(e))?;
+
     // Scene specs live in a store shared by the scene builder and the
     // reload closure: edits to the config swap graphs in place while held
     // notes drain through the graph that opened them. Input and output
@@ -234,6 +246,7 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         defs,
         builder,
         Some((path, reloader)),
+        control,
     )
     .context("failed to start the engine")?;
 

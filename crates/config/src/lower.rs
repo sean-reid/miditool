@@ -6,9 +6,9 @@ use std::net::IpAddr;
 
 use crate::ast;
 use crate::{
-    ClusterAnchor, ClusterKind, Config, ConfigError, ContinuumOrder, CrescendoShape, EffectSpec,
-    MpeSpec, OutputSpec, Plr, RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection,
-    TimeSpec,
+    ClusterAnchor, ClusterKind, Config, ConfigError, ContinuumOrder, ControlSpec, CrescendoShape,
+    EffectSpec, MomentsSpec, MpeSpec, OutputSpec, Plr, RemoteSpec, RowForm, SceneSpec, ShuffleMode,
+    SieveSnap, TDirection, TimeSpec,
 };
 
 /// Output port name used when the config has no `output` node.
@@ -57,13 +57,116 @@ pub(crate) fn document(doc: ast::Document) -> Result<Config, ConfigError> {
     // The tempo resolves first: the generators' pulse floors are
     // absolute, so lowering a `beats=` form needs it.
     let tempo = tempo(doc.tempo)?;
+    // Scenes lower before the control block: goto gestures are checked
+    // against the scene names (the implicit "main" scene included).
+    let scenes = scenes(doc.scenes, doc.effects, tempo)?;
+    let control = control(doc.control, &scenes, tempo)?;
     Ok(Config {
         input: doc.input.as_ref().map(|i| i.name.clone()),
         hide_input: doc.input.as_ref().and_then(|i| i.hide).unwrap_or(false),
         output,
         tempo,
         remote: remote(doc.remote)?,
-        scenes: scenes(doc.scenes, doc.effects, tempo)?,
+        control,
+        scenes,
+    })
+}
+
+fn control(
+    node: Option<ast::Control>,
+    scenes: &[SceneSpec],
+    tempo: f32,
+) -> Result<Option<ControlSpec>, ConfigError> {
+    let Some(node) = node else {
+        return Ok(None);
+    };
+    if node.next_scene.is_none()
+        && node.prev_scene.is_none()
+        && node.gotos.is_empty()
+        && node.panic.is_none()
+        && node.moments.is_none()
+    {
+        return Err(ConfigError::invalid(
+            "control",
+            "the block is empty; give it a gesture (next-scene, prev-scene, \
+             goto, panic) or a moments clock",
+        ));
+    }
+    // Every configured key is range-checked and claimed by exactly one
+    // role; the error for a collision names both claimants.
+    let mut claimed: Vec<(u8, String)> = Vec::new();
+    let mut claim = |value: i64, role: String| -> Result<u8, ConfigError> {
+        let key = key("control", "key", value)?;
+        if let Some((_, other)) = claimed.iter().find(|(k, _)| *k == key) {
+            return Err(ConfigError::invalid(
+                "control",
+                format!("key {key} is assigned to both {other} and {role}"),
+            ));
+        }
+        claimed.push((key, role));
+        Ok(key)
+    };
+    let next_scene = node
+        .next_scene
+        .map(|n| claim(n.key, "next-scene".to_owned()))
+        .transpose()?;
+    let prev_scene = node
+        .prev_scene
+        .map(|n| claim(n.key, "prev-scene".to_owned()))
+        .transpose()?;
+    let mut gotos = Vec::with_capacity(node.gotos.len());
+    for goto in node.gotos {
+        let key = claim(goto.key, format!("goto \"{}\"", goto.scene))?;
+        if !scenes.iter().any(|s| s.name == goto.scene) {
+            return Err(ConfigError::invalid(
+                "control",
+                format!("goto names a scene \"{}\" that does not exist", goto.scene),
+            ));
+        }
+        gotos.push((key, goto.scene));
+    }
+    let panic_key = node
+        .panic
+        .map(|n| claim(n.key, "panic".to_owned()))
+        .transpose()?;
+    let moments = node.moments.map(|m| moments(m, tempo)).transpose()?;
+    Ok(Some(ControlSpec {
+        next_scene,
+        prev_scene,
+        gotos,
+        panic_key,
+        moments,
+    }))
+}
+
+/// The `moments` clock. Both dwells are plain duration strings (the
+/// one-`beats=`-per-node convention cannot serve a pair), so the 2s
+/// floor and the ordering are fully checkable here; the resolution
+/// through `to_nanos` keeps the checks honest should a tempo-relative
+/// form ever appear.
+fn moments(node: ast::Moments, tempo: f32) -> Result<MomentsSpec, ConfigError> {
+    let dwell_lo = duration("moments", "dwell-lo", &node.dwell_lo)?;
+    let dwell_hi = duration("moments", "dwell-hi", &node.dwell_hi)?;
+    let lo_ms = dwell_lo.to_nanos(tempo) / 1_000_000;
+    let hi_ms = dwell_hi.to_nanos(tempo) / 1_000_000;
+    for (prop, ms) in [("dwell-lo", lo_ms), ("dwell-hi", hi_ms)] {
+        if ms < 2000 {
+            return Err(ConfigError::invalid(
+                "moments",
+                format!("{prop} must be at least 2s, got {ms}ms"),
+            ));
+        }
+    }
+    if lo_ms > hi_ms {
+        return Err(ConfigError::invalid(
+            "moments",
+            format!("dwell-lo={lo_ms}ms must not exceed dwell-hi={hi_ms}ms"),
+        ));
+    }
+    Ok(MomentsSpec {
+        dwell_lo,
+        dwell_hi,
+        seed: node.seed.unwrap_or(0),
     })
 }
 
@@ -1166,6 +1269,21 @@ fn effect(node: ast::Effect, tempo: f32, depth: usize) -> Result<EffectSpec, Con
                 max: max as u16,
             }
         }
+        E::CrippledLooper { seed, pedal, max } => EffectSpec::CrippledLooper {
+            seed,
+            pedal: cc("crippled-looper", "pedal", pedal.unwrap_or(64))?,
+            max: bounded("crippled-looper", "max", max.unwrap_or(16), 2, 32)?,
+        },
+        E::Retrograde { pedal, speed } => EffectSpec::Retrograde {
+            pedal: cc("retrograde", "pedal", pedal.unwrap_or(64))?,
+            speed: float_range(
+                "retrograde",
+                "speed",
+                speed.map_or(1.0, |ast::Number(v)| v),
+                0.25,
+                4.0,
+            )?,
+        },
         E::Script { path, seed } => {
             if path.is_empty() {
                 return Err(ConfigError::invalid(
@@ -1383,6 +1501,18 @@ fn key(node: &'static str, prop: &str, value: i64) -> Result<u8, ConfigError> {
         Err(ConfigError::invalid(
             node,
             format!("{prop} must be a key within 0..=127, got {value}"),
+        ))
+    }
+}
+
+/// A MIDI controller number, 0..=127.
+fn cc(node: &'static str, prop: &str, value: i64) -> Result<u8, ConfigError> {
+    if (0..=127).contains(&value) {
+        Ok(value as u8)
+    } else {
+        Err(ConfigError::invalid(
+            node,
+            format!("{prop} must be a CC number within 0..=127, got {value}"),
         ))
     }
 }

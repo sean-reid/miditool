@@ -47,6 +47,7 @@ pub fn bench(rounds: u32) -> anyhow::Result<()> {
         scenes,
         Box::new(|_| Ok(Node::Leaf(Box::new(Pass)))),
         None,
+        None,
     )
     .context("failed to start the pass-through engine")?;
 

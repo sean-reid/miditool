@@ -4,9 +4,9 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use miditool_config::{
-    ClusterAnchor, ClusterKind, Config, ContinuumOrder, CrescendoShape, EffectSpec, MpeSpec,
-    OutputSpec, Plr, RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec,
-    parse_str,
+    ClusterAnchor, ClusterKind, Config, ContinuumOrder, ControlSpec, CrescendoShape, EffectSpec,
+    MomentsSpec, MpeSpec, OutputSpec, Plr, RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap,
+    TDirection, TimeSpec, parse_str,
 };
 
 fn parse(text: &str) -> Config {
@@ -50,6 +50,7 @@ fn scrambled_example_parses_exactly() {
             output: OutputSpec::Virtual("miditool Out".to_owned()),
             tempo: 120.0,
             remote: None,
+            control: None,
             scenes: main_scene(vec![
                 EffectSpec::ShuffleLock {
                     seed: 42,
@@ -78,6 +79,7 @@ fn split_fork_example_parses_exactly() {
             output: OutputSpec::Device("IAC Driver".to_owned()),
             tempo: 120.0,
             remote: None,
+            control: None,
             scenes: main_scene(vec![
                 EffectSpec::OnlyChannels(vec![0]),
                 EffectSpec::Fork(vec![
@@ -132,6 +134,7 @@ fn echoes_example_parses_exactly() {
                 port: 8320,
                 bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             }),
+            control: None,
             scenes: vec![
                 SceneSpec {
                     name: "echoes".to_owned(),
@@ -189,6 +192,7 @@ fn scripted_example_parses_exactly() {
             output: OutputSpec::Virtual("miditool Out".to_owned()),
             tempo: 120.0,
             remote: None,
+            control: None,
             scenes: vec![SceneSpec {
                 name: "wedge".to_owned(),
                 kill_on_exit: false,
@@ -219,6 +223,7 @@ fn serial_example_parses_exactly() {
             output: OutputSpec::Virtual("miditool Serial".to_owned()),
             tempo: 72.0,
             remote: None,
+            control: None,
             scenes: vec![
                 SceneSpec {
                     name: "row".to_owned(),
@@ -283,6 +288,7 @@ fn empty_document_is_a_valid_config() {
             output: OutputSpec::Virtual("miditool Out".to_owned()),
             tempo: 120.0,
             remote: None,
+            control: None,
             scenes: main_scene(vec![]),
         }
     );
@@ -628,8 +634,20 @@ fn nested(node: &str, depth: usize) -> String {
 
 #[test]
 fn moderate_nesting_is_fine() {
-    let chain = parse_chain(&nested("chain", 10));
-    assert!(matches!(chain[0], EffectSpec::Chain(_)));
+    // An explicit stack size, like the limit test below: in debug
+    // builds every effect variant enlarges the generated decoder's
+    // recursion frame, so even moderate depth outgrows the harness's
+    // default test-thread stack. Real parses run on the main thread,
+    // which is several times larger.
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let chain = parse_chain(&nested("chain", 10));
+            assert!(matches!(chain[0], EffectSpec::Chain(_)));
+        })
+        .expect("spawn")
+        .join()
+        .expect("moderate nesting should parse, not overflow");
 }
 
 #[test]
@@ -1517,6 +1535,7 @@ fn clouds_example_parses_exactly() {
             output: OutputSpec::Virtual("miditool Clouds".to_owned()),
             tempo: 84.0,
             remote: None,
+            control: None,
             scenes: vec![
                 SceneSpec {
                     name: "clouds".to_owned(),
@@ -2042,6 +2061,7 @@ fn rhythm_example_parses_exactly() {
             output: OutputSpec::Virtual("miditool Rhythm".to_owned()),
             tempo: 100.0,
             remote: None,
+            control: None,
             scenes: vec![
                 SceneSpec {
                     name: "tresillo".to_owned(),
@@ -2594,6 +2614,7 @@ fn machines_example_parses_exactly() {
             output: OutputSpec::Virtual("miditool Machines".to_owned()),
             tempo: 120.0,
             remote: None,
+            control: None,
             scenes: vec![
                 SceneSpec {
                     name: "continuum".to_owned(),
@@ -2999,6 +3020,7 @@ fn harmony_example_parses_exactly() {
             output: OutputSpec::Virtual("miditool Harmony".to_owned()),
             tempo: 66.0,
             remote: None,
+            control: None,
             scenes: vec![
                 SceneSpec {
                     name: "part".to_owned(),
@@ -3458,6 +3480,7 @@ fn microtonal_example_parses_exactly() {
             output: OutputSpec::Virtual("miditool Microtonal".to_owned()),
             tempo: 60.0,
             remote: None,
+            control: None,
             scenes: vec![
                 SceneSpec {
                     name: "spectral".to_owned(),
@@ -3835,4 +3858,380 @@ fn float_properties_accept_integer_literals() {
         "loose-keys seed=1 sigma=7\nvelocity-curve gamma=2\necho repeats=2 time=\"100ms\" decay=1\nwedge-mirror probability=1\nvelocity-dice seed=1 sigma=15\nresonance-halo level=1 decay=\"1s\"",
     );
     assert_eq!(cfg.scenes[0].chain.len(), 6);
+}
+
+#[test]
+fn performance_example_parses_exactly() {
+    let config = parse(include_str!("../../../examples/performance.kdl"));
+    assert_eq!(
+        config,
+        Config {
+            input: Some("Roland".to_owned()),
+            hide_input: false,
+            output: OutputSpec::Virtual("miditool Performance".to_owned()),
+            tempo: 90.0,
+            remote: None,
+            control: Some(ControlSpec {
+                next_scene: Some(108),
+                prev_scene: None,
+                gotos: vec![(21, "halo".to_owned())],
+                panic_key: Some(20),
+                moments: None,
+            }),
+            scenes: vec![
+                SceneSpec {
+                    name: "halo".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::ResonanceHalo {
+                            width: 2,
+                            level: 0.2,
+                            decay: TimeSpec::Millis(2000.0),
+                            sieve: None,
+                        },
+                        EffectSpec::VelocityCurve {
+                            gamma: 0.9,
+                            floor: 1,
+                            ceiling: 110,
+                        },
+                    ],
+                },
+                SceneSpec {
+                    name: "looper".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::CrippledLooper {
+                            seed: 17,
+                            pedal: 64,
+                            max: 12,
+                        },
+                        EffectSpec::FeldmanField {
+                            seed: 5,
+                            floor: 8,
+                            ceiling: 30,
+                            jitter: 3,
+                        },
+                    ],
+                },
+                SceneSpec {
+                    name: "mirror".to_owned(),
+                    kill_on_exit: true,
+                    chain: vec![
+                        EffectSpec::Retrograde {
+                            pedal: 64,
+                            speed: 0.5,
+                        },
+                        EffectSpec::VelocityCurve {
+                            gamma: 1.1,
+                            floor: 1,
+                            ceiling: 100,
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+}
+
+#[test]
+fn crippled_looper_defaults() {
+    assert_eq!(
+        parse_chain("crippled-looper seed=1"),
+        vec![EffectSpec::CrippledLooper {
+            seed: 1,
+            pedal: 64,
+            max: 16,
+        }]
+    );
+}
+
+#[test]
+fn crippled_looper_full_form() {
+    assert_eq!(
+        parse_chain("crippled-looper seed=9 pedal=67 max=32"),
+        vec![EffectSpec::CrippledLooper {
+            seed: 9,
+            pedal: 67,
+            max: 32,
+        }]
+    );
+}
+
+#[test]
+fn crippled_looper_requires_a_seed() {
+    let msg = parse_err("crippled-looper pedal=64");
+    assert!(
+        msg.contains("seed"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn crippled_looper_range_errors() {
+    let msg = parse_err("crippled-looper seed=1 pedal=128");
+    assert!(
+        msg.contains("crippled-looper") && msg.contains("pedal") && msg.contains("0..=127"),
+        "{msg}"
+    );
+    let msg = parse_err("crippled-looper seed=1 pedal=-1");
+    assert!(msg.contains("0..=127"), "lower bound: {msg}");
+    let msg = parse_err("crippled-looper seed=1 max=1");
+    assert!(msg.contains("max") && msg.contains("2..=32"), "{msg}");
+    let msg = parse_err("crippled-looper seed=1 max=33");
+    assert!(msg.contains("2..=32") && msg.contains("33"), "{msg}");
+}
+
+#[test]
+fn retrograde_defaults() {
+    assert_eq!(
+        parse_chain("retrograde"),
+        vec![EffectSpec::Retrograde {
+            pedal: 64,
+            speed: 1.0,
+        }]
+    );
+}
+
+#[test]
+fn retrograde_full_form() {
+    assert_eq!(
+        parse_chain("retrograde pedal=66 speed=0.5"),
+        vec![EffectSpec::Retrograde {
+            pedal: 66,
+            speed: 0.5,
+        }]
+    );
+}
+
+#[test]
+fn retrograde_speed_accepts_integers() {
+    assert_eq!(
+        parse_chain("retrograde speed=2"),
+        vec![EffectSpec::Retrograde {
+            pedal: 64,
+            speed: 2.0,
+        }]
+    );
+}
+
+#[test]
+fn retrograde_range_errors() {
+    let msg = parse_err("retrograde pedal=128");
+    assert!(
+        msg.contains("retrograde") && msg.contains("pedal") && msg.contains("0..=127"),
+        "{msg}"
+    );
+    let msg = parse_err("retrograde speed=0.1");
+    assert!(msg.contains("speed") && msg.contains("0.25..=4"), "{msg}");
+    let msg = parse_err("retrograde speed=4.5");
+    assert!(msg.contains("0.25..=4") && msg.contains("4.5"), "{msg}");
+}
+
+#[test]
+fn control_block_parses_exactly() {
+    let config = parse(
+        "control {\n\
+             next-scene key=108\n\
+             prev-scene key=107\n\
+             goto key=21 scene=\"a\"\n\
+             goto key=22 scene=\"b\"\n\
+             panic key=20\n\
+             moments dwell-lo=\"20s\" dwell-hi=\"90s\" seed=7\n\
+         }\n\
+         scene \"a\" { pass; }\n\
+         scene \"b\" { discard; }",
+    );
+    assert_eq!(
+        config.control,
+        Some(ControlSpec {
+            next_scene: Some(108),
+            prev_scene: Some(107),
+            gotos: vec![(21, "a".to_owned()), (22, "b".to_owned())],
+            panic_key: Some(20),
+            moments: Some(MomentsSpec {
+                dwell_lo: TimeSpec::Millis(20_000.0),
+                dwell_hi: TimeSpec::Millis(90_000.0),
+                seed: 7,
+            }),
+        })
+    );
+}
+
+#[test]
+fn control_defaults_to_off() {
+    assert_eq!(parse("pass").control, None);
+}
+
+#[test]
+fn moments_seed_defaults_to_zero() {
+    let config = parse("control { moments dwell-lo=\"2s\" dwell-hi=\"2s\"; }\npass");
+    assert_eq!(config.control.unwrap().moments.unwrap().seed, 0);
+}
+
+#[test]
+fn control_works_with_a_bare_effects_config() {
+    // The implicit "main" scene counts as a scene: panic, moments, and
+    // even next-scene (a no-op with one scene) are legal, and a goto
+    // may name "main" itself.
+    let config = parse(
+        "control {\n\
+             next-scene key=108\n\
+             goto key=21 scene=\"main\"\n\
+             panic key=20\n\
+             moments dwell-lo=\"20s\" dwell-hi=\"90s\"\n\
+         }\n\
+         pass",
+    );
+    let control = config.control.expect("control block should parse");
+    assert_eq!(control.next_scene, Some(108));
+    assert_eq!(control.gotos, vec![(21, "main".to_owned())]);
+    assert_eq!(control.panic_key, Some(20));
+    assert_eq!(config.scenes[0].name, "main");
+}
+
+#[test]
+fn empty_control_block_is_rejected() {
+    let msg = parse_err("control {\n}\npass");
+    assert!(
+        msg.contains("control") && msg.contains("empty"),
+        "error should state the constraint: {msg}"
+    );
+    let msg = parse_err("control\npass");
+    assert!(msg.contains("control") && msg.contains("empty"), "{msg}");
+}
+
+#[test]
+fn duplicate_control_block_is_rejected() {
+    let msg = parse_err("control { panic key=20; }\ncontrol { panic key=21; }\npass");
+    assert!(msg.contains("control"), "error should name the node: {msg}");
+}
+
+#[test]
+fn duplicate_control_children_are_rejected() {
+    let msg = parse_err("control {\nnext-scene key=1\nnext-scene key=2\n}\npass");
+    assert!(
+        msg.contains("next-scene"),
+        "error should name the repeated child: {msg}"
+    );
+    let msg = parse_err(
+        "control {\nmoments dwell-lo=\"2s\" dwell-hi=\"3s\"\nmoments dwell-lo=\"2s\" dwell-hi=\"3s\"\n}\npass",
+    );
+    assert!(
+        msg.contains("moments"),
+        "error should name the repeated child: {msg}"
+    );
+}
+
+#[test]
+fn control_gestures_require_a_key() {
+    let msg = parse_err("control { next-scene; }\npass");
+    assert!(
+        msg.contains("key"),
+        "error should name the missing property: {msg}"
+    );
+    let msg = parse_err("control { goto scene=\"main\"; }\npass");
+    assert!(msg.contains("key"), "goto needs a key too: {msg}");
+}
+
+#[test]
+fn goto_requires_a_scene() {
+    let msg = parse_err("control { goto key=21; }\npass");
+    assert!(
+        msg.contains("scene"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn control_key_out_of_range_is_rejected() {
+    let msg = parse_err("control { next-scene key=128; }\npass");
+    assert!(
+        msg.contains("control") && msg.contains("0..=127") && msg.contains("128"),
+        "{msg}"
+    );
+    let msg = parse_err("control { panic key=-1; }\npass");
+    assert!(msg.contains("0..=127"), "lower bound: {msg}");
+}
+
+#[test]
+fn control_keys_must_be_distinct_across_roles() {
+    let msg = parse_err("control {\nnext-scene key=108\ngoto key=108 scene=\"main\"\n}\npass");
+    assert!(
+        msg.contains("108") && msg.contains("next-scene") && msg.contains("goto"),
+        "error should name the key and both roles: {msg}"
+    );
+    let msg = parse_err("control {\npanic key=20\nprev-scene key=20\n}\npass");
+    assert!(
+        msg.contains("20") && msg.contains("panic") && msg.contains("prev-scene"),
+        "{msg}"
+    );
+    let msg = parse_err(
+        "control {\ngoto key=21 scene=\"a\"\ngoto key=21 scene=\"b\"\n}\n\
+         scene \"a\" { pass; }\nscene \"b\" { pass; }",
+    );
+    assert!(
+        msg.contains("21") && msg.contains("\"a\"") && msg.contains("\"b\""),
+        "two gotos on one key should name both scenes: {msg}"
+    );
+}
+
+#[test]
+fn goto_to_an_unknown_scene_is_rejected() {
+    let msg = parse_err(
+        "control { goto key=21 scene=\"clouds\"; }\n\
+         scene \"a\" { pass; }",
+    );
+    assert!(
+        msg.contains("goto") && msg.contains("\"clouds\""),
+        "error should name the missing scene: {msg}"
+    );
+}
+
+#[test]
+fn moments_requires_both_dwells() {
+    let msg = parse_err("control { moments dwell-hi=\"90s\"; }\npass");
+    assert!(
+        msg.contains("dwell-lo"),
+        "error should name the missing property: {msg}"
+    );
+    let msg = parse_err("control { moments dwell-lo=\"20s\"; }\npass");
+    assert!(
+        msg.contains("dwell-hi"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn moments_dwells_are_plain_durations() {
+    // The one-beats=-per-node convention cannot serve a pair, so the
+    // dwells take duration strings only, like duration-lottery's min=
+    // and max=.
+    let msg = parse_err("control { moments dwell-lo=\"20\" dwell-hi=\"90s\"; }\npass");
+    assert!(
+        msg.contains("moments") && msg.contains("dwell-lo") && msg.contains("250ms"),
+        "error should name the property and show the accepted form: {msg}"
+    );
+}
+
+#[test]
+fn moments_dwells_must_reach_two_seconds() {
+    let msg = parse_err("control { moments dwell-lo=\"1s\" dwell-hi=\"90s\"; }\npass");
+    assert!(
+        msg.contains("moments") && msg.contains("dwell-lo") && msg.contains("at least 2s"),
+        "{msg}"
+    );
+    let msg = parse_err("control { moments dwell-lo=\"2s\" dwell-hi=\"1999ms\"; }\npass");
+    assert!(
+        msg.contains("dwell-hi") && msg.contains("at least 2s"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn moments_dwell_lo_must_not_exceed_dwell_hi() {
+    let msg = parse_err("control { moments dwell-lo=\"90s\" dwell-hi=\"20s\"; }\npass");
+    assert!(
+        msg.contains("dwell-lo=90000ms") && msg.contains("dwell-hi=20000ms"),
+        "error should show both bounds: {msg}"
+    );
 }

@@ -1,0 +1,45 @@
+// A performance rig in three rooms, stepped through from the keyboard
+// itself: the top C advances to the next scene, the bottom A jumps
+// straight home, and the low G# is the panic switch. The reserved keys
+// sit at the ends of the piano, out of the music's way, and never
+// reach the effects.
+//
+// Everything random is seeded, so the same playing gives the same music.
+
+input "Roland"
+output virtual="miditool Performance"
+
+tempo 90
+
+control {
+    next-scene key=108               // C8 steps to the next room
+    goto key=21 scene="halo"         // A0 jumps straight home
+    panic key=20                     // G#0 flushes and silences everything
+    // Uncomment to let the moments clock wander the rooms on its own,
+    // staying somewhere between 20 and 90 seconds in each:
+    // moments dwell-lo="20s" dwell-hi="90s" seed=7
+}
+
+// Home: a quiet halo of neighbors around whatever is played, the
+// curve keeping the whole room in hand.
+scene "halo" {
+    resonance-halo width=2 level=0.2 decay="2s"
+    velocity-curve gamma=0.9 ceiling=110
+}
+
+// Hold the sustain pedal to teach the looper a phrase (up to 12
+// notes), release to set it circling. Each pass warps one seeded
+// detail, Feldman's crippled symmetry: never repeating, never
+// settling; the field underneath sinks it all toward a whisper.
+scene "looper" {
+    crippled-looper seed=17 pedal=64 max=12
+    feldman-field seed=5 floor=8 ceiling=30 jitter=3
+}
+
+// The same pedal runs the palindrome machine here: hold to record,
+// release to hear the phrase backwards at half the recorded pace.
+// switch="kill" cuts the playback the moment you leave.
+scene "mirror" switch="kill" {
+    retrograde pedal=64 speed=0.5
+    velocity-curve gamma=1.1 ceiling=100
+}

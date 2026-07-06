@@ -28,6 +28,31 @@
 //! }
 //! ```
 //!
+//! An optional top-level `control` block (at most one) reserves
+//! keyboard keys as performance gestures and can hand scene changes to
+//! a "moments" clock that drifts between scenes on its own:
+//!
+//! ```kdl
+//! control {
+//!     next-scene key=108
+//!     prev-scene key=107
+//!     goto key=21 scene="clouds"
+//!     panic key=20
+//!     moments dwell-lo="20s" dwell-hi="90s" seed=7
+//! }
+//! ```
+//!
+//! Keys are MIDI key numbers 0..=127, each serving one role; `goto` is
+//! repeatable and must name an existing scene (the implicit "main"
+//! scene of a bare-effects config counts). The dwells are plain
+//! duration strings, each at least 2s with `dwell-lo <= dwell-hi`: the
+//! `beats=` convention admits one beat-valued property per node, and
+//! the dwell pair needs two, so neither takes it. Gestures resolve to
+//! scene indices when the engine starts; in v1 a live config reload
+//! does not re-resolve them, so a reload that reorders or renames
+//! scenes leaves next/prev/goto pointing at the old positions until a
+//! restart.
+//!
 //! Besides the built-in effects, a chain can hold a `script` node
 //! (`script "wedge.lua" seed=42`) that runs a Luau file on every event.
 //! The path stays verbatim in the spec; the CLI resolves and loads it.
@@ -63,9 +88,58 @@ pub struct Config {
     /// The phone/tablet web remote, from the top-level `remote` node;
     /// `None` leaves the remote off.
     pub remote: Option<RemoteSpec>,
+    /// Keyboard keys reserved as performance gestures, from the
+    /// top-level `control` block; `None` leaves them all off.
+    pub control: Option<ControlSpec>,
     /// The scenes, in file order; always at least one. Bare top-level
     /// effects lower to a single scene named "main".
     pub scenes: Vec<SceneSpec>,
+}
+
+/// Keyboard keys reserved as performance gestures, from the top-level
+/// `control` block.
+///
+/// Every configured key is a MIDI key number `0..=127`, and each key
+/// serves exactly one role. Goto scene names are validated against the
+/// config's scenes (the implicit "main" scene of a bare-effects config
+/// counts), but they resolve to scene indices only when the engine
+/// starts. In v1 a live config reload does not re-resolve them:
+/// gestures keep their startup indices, so a reload that reorders or
+/// renames scenes leaves next/prev/goto pointing at the old positions
+/// until a restart.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ControlSpec {
+    /// Key that steps to the next scene, from `next-scene key=`. Legal
+    /// with a single scene too, where it is a no-op.
+    pub next_scene: Option<u8>,
+    /// Key that steps to the previous scene, from `prev-scene key=`.
+    pub prev_scene: Option<u8>,
+    /// Keys that jump straight to a named scene, from the repeatable
+    /// `goto key=.. scene=".."` nodes, in file order.
+    pub gotos: Vec<(u8, String)>,
+    /// Key that flushes and silences everything, from `panic key=`.
+    pub panic_key: Option<u8>,
+    /// The moments clock; `None` leaves it off.
+    pub moments: Option<MomentsSpec>,
+}
+
+/// The `moments` clock inside the `control` block: the engine drifts
+/// between scenes on its own, dwelling a seeded random time within
+/// `dwell_lo..=dwell_hi` before each move.
+///
+/// Both dwells are plain duration strings (`dwell-lo="20s"`): the
+/// `beats=` convention admits one beat-valued property per node, and
+/// the dwell pair needs two, so neither takes it (the same rule as
+/// `duration-lottery`'s `min=` and `max=`). Each dwell must come to at
+/// least 2 seconds, and `dwell_lo` must not exceed `dwell_hi`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MomentsSpec {
+    /// Shortest stay in one scene, at least 2s.
+    pub dwell_lo: TimeSpec,
+    /// Longest stay in one scene, at least `dwell_lo`.
+    pub dwell_hi: TimeSpec,
+    /// Seed for the dwell lottery; defaults to 0.
+    pub seed: u64,
 }
 
 /// The web remote's listen address, from the `remote` node.
@@ -639,6 +713,15 @@ pub enum EffectSpec {
     /// silent for `idle` it answers with a seeded walk over what it
     /// heard, at most `max` notes or until you play again.
     Continuator { seed: u64, idle: TimeSpec, max: u16 },
+    /// Feldman's crippled symmetry as a looper: hold the pedal (CC
+    /// `pedal`) to record up to `max` notes, release to set the phrase
+    /// circling; each pass warps one seeded detail, so the loop never
+    /// repeats and never settles.
+    CrippledLooper { seed: u64, pedal: u8, max: u8 },
+    /// A palindrome pedal: hold the pedal (CC `pedal`) to record,
+    /// release to hear the phrase played backwards at `speed` times
+    /// the recorded pace.
+    Retrograde { pedal: u8, speed: f32 },
     /// Run a Luau script on every event: `script "wedge.lua" seed=42`.
     /// The path is kept exactly as written; the CLI resolves it against
     /// the config file's directory when it builds the graph, so parsing

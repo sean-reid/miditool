@@ -22,6 +22,10 @@ pub(crate) struct Document {
     /// `remote port=8320`
     #[knus(child)]
     pub remote: Option<Remote>,
+    /// `control { ... }`: keyboard keys reserved as performance
+    /// gestures, plus the optional moments clock.
+    #[knus(child)]
+    pub control: Option<Control>,
     /// `scene "name" { ... }` blocks. Mutually exclusive with bare
     /// effects; [`crate::lower`] enforces that.
     #[knus(children(name = "scene"))]
@@ -68,6 +72,55 @@ pub(crate) struct Remote {
     pub port: i64,
     #[knus(property)]
     pub bind: Option<String>,
+}
+
+/// The `control` node: keyboard keys reserved as performance gestures
+/// (`next-scene`, `prev-scene`, repeatable `goto`, `panic`), plus the
+/// optional `moments` clock. Keys stay wide here; [`crate::lower`]
+/// range-checks them and enforces that each key serves one role.
+#[derive(Debug, knus::Decode)]
+pub(crate) struct Control {
+    #[knus(child)]
+    pub next_scene: Option<ControlKey>,
+    #[knus(child)]
+    pub prev_scene: Option<ControlKey>,
+    #[knus(children(name = "goto"))]
+    pub gotos: Vec<Goto>,
+    #[knus(child)]
+    pub panic: Option<ControlKey>,
+    #[knus(child)]
+    pub moments: Option<Moments>,
+}
+
+/// A control gesture carrying just `key=<0..=127>`: `next-scene`,
+/// `prev-scene`, and `panic` all look like this.
+#[derive(Debug, knus::Decode)]
+pub(crate) struct ControlKey {
+    #[knus(property)]
+    pub key: i64,
+}
+
+/// `goto key=21 scene="clouds"`: a jump straight to a named scene.
+#[derive(Debug, knus::Decode)]
+pub(crate) struct Goto {
+    #[knus(property)]
+    pub key: i64,
+    #[knus(property)]
+    pub scene: String,
+}
+
+/// `moments dwell-lo="20s" dwell-hi="90s" seed=7`. Both dwells are
+/// plain duration strings: the `beats=` convention admits one
+/// beat-valued property per node and the dwell pair needs two, so
+/// neither takes it.
+#[derive(Debug, knus::Decode)]
+pub(crate) struct Moments {
+    #[knus(property)]
+    pub dwell_lo: String,
+    #[knus(property)]
+    pub dwell_hi: String,
+    #[knus(property)]
+    pub seed: Option<u64>,
 }
 
 /// A `scene` node: a name, an optional `switch=` behavior, and the
@@ -627,6 +680,20 @@ pub(crate) enum Effect {
         beats: Option<Number>,
         #[knus(property)]
         max: Option<i64>,
+    },
+    CrippledLooper {
+        #[knus(property)]
+        seed: u64,
+        #[knus(property)]
+        pedal: Option<i64>,
+        #[knus(property)]
+        max: Option<i64>,
+    },
+    Retrograde {
+        #[knus(property)]
+        pedal: Option<i64>,
+        #[knus(property)]
+        speed: Option<Number>,
     },
     Script {
         #[knus(argument)]

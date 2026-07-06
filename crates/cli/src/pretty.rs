@@ -123,9 +123,9 @@ effects
       tonic triad, the nearest (position=1) or second-nearest triad tone
       \"superior\", \"inferior\", or \"alternating\", at level of the touch.
   mode-lock mode=1 transposition=0 snap=\"nearest\"
-      Lock keys to a church mode, 1 (ionian) through 7 (locrian),
-      shifted up transposition semitones. Off-mode notes snap
-      \"nearest\", \"up\", or \"down\", or \"drop\" entirely.
+      Lock keys to one of Messiaen's seven modes of limited
+      transposition, shifted up transposition semitones. Off-mode notes
+      snap \"nearest\", \"up\", or \"down\", or \"drop\" entirely.
   negative-harmony tonic=\"c\" mode=\"replace\" level=0.8
       Reflect notes through the tonic's negative-harmony axis: the
       mirror replaces each note, or with mode=\"add\" joins it at level

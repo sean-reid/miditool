@@ -157,7 +157,29 @@ pub enum RowForm {
     RetrogradeInversion,
 }
 
-/// How `sieve` handles a key that is not on the sieve.
+/// Where `tintinnabuli` places the triad voice relative to the melody.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TDirection {
+    /// The nearest triad tone above the melody note.
+    Superior,
+    /// The nearest triad tone below.
+    Inferior,
+    /// Above and below by turns, note for note.
+    Alternating,
+}
+
+/// One neo-Riemannian move in a `tonnetz` sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Plr {
+    /// Parallel: swap major and minor over the same root.
+    P,
+    /// Leittonwechsel: move the root by a semitone.
+    L,
+    /// Relative: exchange a triad for its relative major or minor.
+    R,
+}
+
+/// How `sieve` and `mode-lock` handle a key that is off the grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SieveSnap {
     /// Move to the closest sieve key.
@@ -328,6 +350,45 @@ pub enum EffectSpec {
     /// `miditool-core`'s sieve grammar when it builds the graph, so this
     /// crate only checks that it is non-empty.
     Sieve { expr: String, snap: SieveSnap },
+    /// Pärt's tintinnabuli: each melody note brings a companion from
+    /// the tonic triad, the `position`th triad tone above (`Superior`),
+    /// below (`Inferior`), or by turns (`Alternating`), at `level` of
+    /// the played velocity. `root` is a pitch class 0..=11.
+    Tintinnabuli {
+        root: u8,
+        minor: bool,
+        position: u8,
+        direction: TDirection,
+        level: f32,
+    },
+    /// Snap keys onto one of the seven church modes (1 Ionian through
+    /// 7 Locrian), shifted up `transposition` semitones; off-mode keys
+    /// snap like `sieve` does.
+    ModeLock {
+        mode: u8,
+        transposition: u8,
+        snap: SieveSnap,
+    },
+    /// Reflect notes through the negative-harmony axis of the `tonic`
+    /// (a pitch class 0..=11): the mirror replaces the note, or joins
+    /// it at `level` of the played velocity when `add`.
+    NegativeHarmony { tonic: u8, add: bool, level: f32 },
+    /// Walk the neo-Riemannian Tonnetz: from the `start` triad (major,
+    /// or minor when `minor`), each note-on takes the next step in the
+    /// `sequence` and sounds the arrived-at triad within `lo..=hi`;
+    /// `include_played` keeps the played note too.
+    Tonnetz {
+        start: u8,
+        minor: bool,
+        sequence: Vec<Plr>,
+        lo: u8,
+        hi: u8,
+        include_played: bool,
+    },
+    /// Sound what is not played: a quiet pad, velocity `vel`, of the
+    /// pitch classes missing from the held notes, voiced within
+    /// `lo..=hi` and revoiced as the harmony changes.
+    ComplementPad { lo: u8, hi: u8, vel: u8 },
     /// Spray a seeded Poisson cloud of grains from each note-on:
     /// `density` grains per second for `duration`, pitches spread
     /// `sigma` semitones and velocities `vel_sigma` steps (both

@@ -118,6 +118,25 @@ effects
   blocked-keys 60 64 67
       Drop the listed keys; with by-class=true they are pitch classes
       0-11, blocked in every octave.
+  tintinnabuli root=\"a\" minor=true position=1 direction=\"superior\" level=0.8
+      Pärt's tintinnabuli: each melody note brings a companion from the
+      tonic triad, the nearest (position=1) or second-nearest triad tone
+      \"superior\", \"inferior\", or \"alternating\", at level of the touch.
+  mode-lock mode=1 transposition=0 snap=\"nearest\"
+      Lock keys to a church mode, 1 (ionian) through 7 (locrian),
+      shifted up transposition semitones. Off-mode notes snap
+      \"nearest\", \"up\", or \"down\", or \"drop\" entirely.
+  negative-harmony tonic=\"c\" mode=\"replace\" level=0.8
+      Reflect notes through the tonic's negative-harmony axis: the
+      mirror replaces each note, or with mode=\"add\" joins it at level
+      of the touch.
+  tonnetz start=\"c\" minor=false sequence=\"rl\" lo=48 hi=79 include-played=false
+      Walk the neo-Riemannian Tonnetz: each note takes the next p/l/r
+      step in the sequence and sounds the arrived-at triad, voiced
+      within lo..hi; include-played=true keeps your note too.
+  complement-pad lo=60 hi=84 vel=18
+      Sound what you are not playing: the missing pitch classes hum
+      underneath as a quiet pad at vel, revoiced as the harmony moves.
   poisson-cloud seed=<u64> density=8.0 duration=\"2s\" sigma=7.0 vel-sigma=10.0 max=16
       Each note-on sprays a seeded cloud of grains: density grains per
       second for the duration, pitches and velocities spread Gaussian
@@ -231,7 +250,9 @@ a scene switcher to browsers on the given port; without bind= it stays
 on this machine, and bind=\"0.0.0.0\" opens it to the local network.
 
 Any time-measuring property (time=, interval=, duration=, and so on)
-takes \"250ms\" or \"1.5s\", or beats=0.5 against the tempo. Randomness is deterministic: the same seed
+takes \"250ms\" or \"1.5s\", or beats=0.5 against the tempo. Note-valued
+properties (root=, tonic=, start=) take a note name like \"c\", \"f#\",
+or \"bb\", or a pitch class 0..11. Randomness is deterministic: the same seed
 always gives the same result. The script node's Lua API is documented at
 https://sean-reid.github.io/miditool/configuration/scripting/.
 ";

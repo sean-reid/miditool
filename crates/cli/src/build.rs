@@ -3,17 +3,17 @@
 use std::path::Path;
 
 use miditool_config::{
-    ClusterAnchor, ClusterKind, CrescendoShape, EffectSpec, OutputSpec, RowForm, ShuffleMode,
-    SieveSnap,
+    ClusterAnchor, ClusterKind, CrescendoShape, EffectSpec, OutputSpec, Plr, RowForm, ShuffleMode,
+    SieveSnap, TDirection,
 };
 use miditool_core::graph::{Discard, Filter, Node, Pass};
 use miditool_effects::{
     AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, Channelize, ClusterFist,
-    Delay, DensityGovernor, DurationLottery, Echo, EuclideanGate, FeldmanField, KeyDist,
-    Klangfarben, LooseKeys, MassCrescendo, NoteRoulette, PoissonCloud, Quantize, RegistralScatter,
-    ResonanceHalo, Restrike, RingMod, RowSnap, ShuffleLock, SieveQuantizer, Stutter, Talea,
-    Telescope, Transpose, VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter,
-    WedgeMirror,
+    ComplementPad, Delay, DensityGovernor, DurationLottery, Echo, EuclideanGate, FeldmanField,
+    KeyDist, Klangfarben, LooseKeys, MassCrescendo, ModeLock, NegativeHarmony, NoteRoulette,
+    PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowSnap,
+    ShuffleLock, SieveQuantizer, Stutter, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose,
+    VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
 };
 use miditool_io::OutputTarget;
 
@@ -147,6 +147,52 @@ fn build_node(spec: EffectSpec, tempo: f32, base: &Path) -> Result<Node, String>
             let sieve = miditool_core::sieve::Sieve::parse(&expr)
                 .map_err(|e| format!("sieve \"{expr}\": {e}"))?;
             Node::Leaf(Box::new(SieveQuantizer::new(sieve, sieve_snap(snap))))
+        }
+        EffectSpec::Tintinnabuli {
+            root,
+            minor,
+            position,
+            direction,
+            level,
+        } => Node::Leaf(Box::new(Tintinnabuli::new(
+            root,
+            minor,
+            position,
+            t_direction(direction),
+            level,
+        ))),
+        EffectSpec::ModeLock {
+            mode,
+            transposition,
+            snap,
+        } => Node::Leaf(Box::new(ModeLock::new(
+            mode,
+            transposition,
+            sieve_snap(snap),
+        ))),
+        EffectSpec::NegativeHarmony { tonic, add, level } => {
+            Node::Leaf(Box::new(NegativeHarmony::new(tonic, add, level)))
+        }
+        EffectSpec::Tonnetz {
+            start,
+            minor,
+            sequence,
+            lo,
+            hi,
+            include_played,
+        } => {
+            let sequence: Vec<miditool_effects::Plr> = sequence.into_iter().map(plr).collect();
+            Node::Leaf(Box::new(Tonnetz::new(
+                start,
+                minor,
+                &sequence,
+                lo,
+                hi,
+                include_played,
+            )))
+        }
+        EffectSpec::ComplementPad { lo, hi, vel } => {
+            Node::Leaf(Box::new(ComplementPad::new(lo, hi, vel)))
         }
         EffectSpec::PoissonCloud {
             seed,
@@ -388,6 +434,22 @@ fn cluster_anchor(anchor: ClusterAnchor) -> miditool_effects::ClusterAnchor {
         ClusterAnchor::Bottom => miditool_effects::ClusterAnchor::Bottom,
         ClusterAnchor::Center => miditool_effects::ClusterAnchor::Center,
         ClusterAnchor::Top => miditool_effects::ClusterAnchor::Top,
+    }
+}
+
+fn t_direction(direction: TDirection) -> miditool_effects::TDirection {
+    match direction {
+        TDirection::Superior => miditool_effects::TDirection::Superior,
+        TDirection::Inferior => miditool_effects::TDirection::Inferior,
+        TDirection::Alternating => miditool_effects::TDirection::Alternating,
+    }
+}
+
+fn plr(step: Plr) -> miditool_effects::Plr {
+    match step {
+        Plr::P => miditool_effects::Plr::P,
+        Plr::L => miditool_effects::Plr::L,
+        Plr::R => miditool_effects::Plr::R,
     }
 }
 

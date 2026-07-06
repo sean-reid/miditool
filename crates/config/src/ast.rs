@@ -302,6 +302,56 @@ pub(crate) enum Effect {
         #[knus(property)]
         snap: Option<String>,
     },
+    Tintinnabuli {
+        #[knus(property)]
+        root: String,
+        #[knus(property)]
+        minor: Option<bool>,
+        #[knus(property)]
+        position: Option<i64>,
+        #[knus(property)]
+        direction: Option<String>,
+        #[knus(property)]
+        level: Option<Number>,
+    },
+    ModeLock {
+        #[knus(property)]
+        mode: i64,
+        #[knus(property)]
+        transposition: Option<i64>,
+        #[knus(property)]
+        snap: Option<String>,
+    },
+    NegativeHarmony {
+        #[knus(property)]
+        tonic: String,
+        #[knus(property)]
+        mode: Option<String>,
+        #[knus(property)]
+        level: Option<Number>,
+    },
+    Tonnetz {
+        #[knus(property)]
+        start: String,
+        #[knus(property)]
+        minor: Option<bool>,
+        #[knus(property)]
+        sequence: Option<String>,
+        #[knus(property)]
+        lo: Option<i64>,
+        #[knus(property)]
+        hi: Option<i64>,
+        #[knus(property)]
+        include_played: Option<bool>,
+    },
+    ComplementPad {
+        #[knus(property)]
+        lo: Option<i64>,
+        #[knus(property)]
+        hi: Option<i64>,
+        #[knus(property)]
+        vel: Option<i64>,
+    },
     PoissonCloud {
         #[knus(property)]
         seed: u64,

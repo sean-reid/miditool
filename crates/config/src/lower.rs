@@ -6,8 +6,8 @@ use std::net::IpAddr;
 
 use crate::ast;
 use crate::{
-    ClusterAnchor, ClusterKind, Config, ConfigError, CrescendoShape, EffectSpec, OutputSpec,
-    RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TimeSpec,
+    ClusterAnchor, ClusterKind, Config, ConfigError, CrescendoShape, EffectSpec, OutputSpec, Plr,
+    RemoteSpec, RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec,
 };
 
 /// Output port name used when the config has no `output` node.
@@ -523,7 +523,74 @@ fn effect(node: ast::Effect, depth: usize) -> Result<EffectSpec, ConfigError> {
             }
             EffectSpec::Sieve {
                 expr,
-                snap: sieve_snap(snap)?,
+                snap: sieve_snap("sieve", snap)?,
+            }
+        }
+        E::Tintinnabuli {
+            root,
+            minor,
+            position,
+            direction,
+            level,
+        } => EffectSpec::Tintinnabuli {
+            root: pitch_class("tintinnabuli", "root", &root)?,
+            minor: minor.unwrap_or(true),
+            position: bounded("tintinnabuli", "position", position.unwrap_or(1), 1, 2)?,
+            direction: t_direction(direction)?,
+            level: fraction(
+                "tintinnabuli",
+                "level",
+                level.map_or(0.8, |ast::Number(v)| v),
+            )?,
+        },
+        E::ModeLock {
+            mode,
+            transposition,
+            snap,
+        } => EffectSpec::ModeLock {
+            mode: bounded("mode-lock", "mode", mode, 1, 7)?,
+            transposition: bounded(
+                "mode-lock",
+                "transposition",
+                transposition.unwrap_or(0),
+                0,
+                11,
+            )?,
+            snap: sieve_snap("mode-lock", snap)?,
+        },
+        E::NegativeHarmony { tonic, mode, level } => EffectSpec::NegativeHarmony {
+            tonic: pitch_class("negative-harmony", "tonic", &tonic)?,
+            add: negative_harmony_add(mode)?,
+            level: fraction(
+                "negative-harmony",
+                "level",
+                level.map_or(0.8, |ast::Number(v)| v),
+            )?,
+        },
+        E::Tonnetz {
+            start,
+            minor,
+            sequence,
+            lo,
+            hi,
+            include_played,
+        } => {
+            let (lo, hi) = key_range("tonnetz", lo, hi, 48, 79)?;
+            EffectSpec::Tonnetz {
+                start: pitch_class("tonnetz", "start", &start)?,
+                minor: minor.unwrap_or(false),
+                sequence: plr_sequence(sequence.as_deref().unwrap_or("rl"))?,
+                lo,
+                hi,
+                include_played: include_played.unwrap_or(false),
+            }
+        }
+        E::ComplementPad { lo, hi, vel } => {
+            let (lo, hi) = key_range("complement-pad", lo, hi, 60, 84)?;
+            EffectSpec::ComplementPad {
+                lo,
+                hi,
+                vel: velocity("complement-pad", "vel", vel.unwrap_or(18))?,
             }
         }
         E::PoissonCloud {
@@ -1235,17 +1302,109 @@ fn row_form(form: Option<String>) -> Result<RowForm, ConfigError> {
     }
 }
 
-fn sieve_snap(snap: Option<String>) -> Result<SieveSnap, ConfigError> {
+/// The `snap=` property shared by `sieve` and `mode-lock`: what to do
+/// with a key that is off the grid.
+fn sieve_snap(node: &'static str, snap: Option<String>) -> Result<SieveSnap, ConfigError> {
     match snap.as_deref() {
         None | Some("nearest") => Ok(SieveSnap::Nearest),
         Some("up") => Ok(SieveSnap::Up),
         Some("down") => Ok(SieveSnap::Down),
         Some("drop") => Ok(SieveSnap::Drop),
         Some(other) => Err(ConfigError::invalid(
-            "sieve",
+            node,
             format!("snap must be \"nearest\", \"up\", \"down\", or \"drop\", got \"{other}\""),
         )),
     }
+}
+
+/// A pitch class written as a note name or a number: a letter a-g with
+/// an optional `#` or `b` accidental (`"c"`, `"f#"`, `"bb"`, case does
+/// not matter), or a numeric string `"0"`..`"11"`.
+fn pitch_class(node: &'static str, prop: &str, text: &str) -> Result<u8, ConfigError> {
+    let bad = || {
+        ConfigError::invalid(
+            node,
+            format!(
+                "{prop} must be a note name like \"c\", \"f#\", or \"bb\", \
+                 or a pitch class \"0\"..\"11\", got \"{text}\""
+            ),
+        )
+    };
+    if !text.is_empty() && text.chars().all(|c| c.is_ascii_digit()) {
+        return match text.parse::<u8>() {
+            Ok(pc) if pc <= 11 => Ok(pc),
+            _ => Err(bad()),
+        };
+    }
+    let lower = text.to_ascii_lowercase();
+    let mut chars = lower.chars();
+    let base: i8 = match chars.next() {
+        Some('c') => 0,
+        Some('d') => 2,
+        Some('e') => 4,
+        Some('f') => 5,
+        Some('g') => 7,
+        Some('a') => 9,
+        Some('b') => 11,
+        _ => return Err(bad()),
+    };
+    let shift: i8 = match chars.as_str() {
+        "" => 0,
+        "#" => 1,
+        "b" => -1,
+        _ => return Err(bad()),
+    };
+    Ok((base + shift).rem_euclid(12) as u8)
+}
+
+fn t_direction(direction: Option<String>) -> Result<TDirection, ConfigError> {
+    match direction.as_deref() {
+        None | Some("superior") => Ok(TDirection::Superior),
+        Some("inferior") => Ok(TDirection::Inferior),
+        Some("alternating") => Ok(TDirection::Alternating),
+        Some(other) => Err(ConfigError::invalid(
+            "tintinnabuli",
+            format!(
+                "direction must be \"superior\", \"inferior\", or \"alternating\", \
+                 got \"{other}\""
+            ),
+        )),
+    }
+}
+
+/// `negative-harmony`'s mode: `"replace"` (the default) swaps the note
+/// for its mirror, `"add"` sounds both.
+fn negative_harmony_add(mode: Option<String>) -> Result<bool, ConfigError> {
+    match mode.as_deref() {
+        None | Some("replace") => Ok(false),
+        Some("add") => Ok(true),
+        Some(other) => Err(ConfigError::invalid(
+            "negative-harmony",
+            format!("mode must be \"replace\" or \"add\", got \"{other}\""),
+        )),
+    }
+}
+
+/// A `tonnetz` move sequence: a non-empty string of the letters p, l,
+/// and r, case-insensitive, read left to right.
+fn plr_sequence(text: &str) -> Result<Vec<Plr>, ConfigError> {
+    if text.is_empty() {
+        return Err(ConfigError::invalid(
+            "tonnetz",
+            "the sequence must not be empty",
+        ));
+    }
+    text.chars()
+        .map(|c| match c.to_ascii_lowercase() {
+            'p' => Ok(Plr::P),
+            'l' => Ok(Plr::L),
+            'r' => Ok(Plr::R),
+            other => Err(ConfigError::invalid(
+                "tonnetz",
+                format!("the sequence uses only the letters p, l, and r, got '{other}'"),
+            )),
+        })
+        .collect()
 }
 
 /// Resolve a `cluster-fist` kind and its `sieve=` companion: the sieve
@@ -1361,5 +1520,78 @@ fn shuffle_mode(mode: Option<String>) -> Result<ShuffleMode, ConfigError> {
                  got \"{other}\""
             ),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pitch_class;
+
+    fn pc(text: &str) -> u8 {
+        pitch_class("test-node", "root", text).expect("note name should parse")
+    }
+
+    fn pc_err(text: &str) -> String {
+        pitch_class("test-node", "root", text)
+            .expect_err("note name should not parse")
+            .to_string()
+    }
+
+    #[test]
+    fn every_natural_letter_maps_to_its_pitch_class() {
+        assert_eq!(pc("c"), 0);
+        assert_eq!(pc("d"), 2);
+        assert_eq!(pc("e"), 4);
+        assert_eq!(pc("f"), 5);
+        assert_eq!(pc("g"), 7);
+        assert_eq!(pc("a"), 9);
+        assert_eq!(pc("b"), 11);
+    }
+
+    #[test]
+    fn sharps_and_flats_are_enharmonic() {
+        assert_eq!(pc("c#"), pc("db"));
+        assert_eq!(pc("d#"), pc("eb"));
+        assert_eq!(pc("f#"), pc("gb"));
+        assert_eq!(pc("g#"), pc("ab"));
+        assert_eq!(pc("a#"), pc("bb"));
+        assert_eq!(pc("c#"), 1);
+        assert_eq!(pc("bb"), 10);
+        // The wrapping enharmonics too.
+        assert_eq!(pc("cb"), 11);
+        assert_eq!(pc("b#"), 0);
+        assert_eq!(pc("e#"), 5);
+        assert_eq!(pc("fb"), 4);
+    }
+
+    #[test]
+    fn case_does_not_matter() {
+        assert_eq!(pc("F#"), 6);
+        assert_eq!(pc("Db"), 1);
+        assert_eq!(pc("DB"), 1);
+        assert_eq!(pc("A"), 9);
+    }
+
+    #[test]
+    fn numeric_pitch_classes_parse() {
+        for n in 0..=11u8 {
+            assert_eq!(pc(&n.to_string()), n);
+        }
+    }
+
+    #[test]
+    fn bad_note_names_are_rejected_with_the_accepted_forms() {
+        for bad in ["h", "cb#", "c##", "12", "99", "", "#", "b b", "-1", "1a"] {
+            let msg = pc_err(bad);
+            assert!(
+                msg.contains("test-node")
+                    && msg.contains("root")
+                    && msg.contains("f#")
+                    && msg.contains("0")
+                    && msg.contains("11"),
+                "error for {bad:?} should name the property and the accepted forms: {msg}"
+            );
+        }
+        assert!(pc_err("h").contains("\"h\""), "the value is echoed back");
     }
 }

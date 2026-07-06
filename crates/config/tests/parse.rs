@@ -4,8 +4,8 @@
 use std::net::{IpAddr, Ipv4Addr};
 
 use miditool_config::{
-    ClusterAnchor, ClusterKind, Config, CrescendoShape, EffectSpec, OutputSpec, RemoteSpec,
-    RowForm, SceneSpec, ShuffleMode, SieveSnap, TimeSpec, parse_str,
+    ClusterAnchor, ClusterKind, Config, CrescendoShape, EffectSpec, OutputSpec, Plr, RemoteSpec,
+    RowForm, SceneSpec, ShuffleMode, SieveSnap, TDirection, TimeSpec, parse_str,
 };
 
 fn parse(text: &str) -> Config {
@@ -2580,6 +2580,455 @@ fn mass_crescendo_bad_shape_is_rejected() {
         msg.contains("sawtooth") && msg.contains("ramp") && msg.contains("arch"),
         "error should show the bad shape and the alternatives: {msg}"
     );
+}
+
+#[test]
+fn harmony_example_parses_exactly() {
+    let config = parse(include_str!("../../../examples/harmony.kdl"));
+    assert_eq!(
+        config,
+        Config {
+            input: Some("Roland".to_owned()),
+            hide_input: false,
+            output: OutputSpec::Virtual("miditool Harmony".to_owned()),
+            tempo: 66.0,
+            remote: None,
+            scenes: vec![
+                SceneSpec {
+                    name: "part".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::Tintinnabuli {
+                            root: 9,
+                            minor: true,
+                            position: 1,
+                            direction: TDirection::Superior,
+                            level: 0.7,
+                        },
+                        EffectSpec::FeldmanField {
+                            seed: 3,
+                            floor: 6,
+                            ceiling: 22,
+                            jitter: 3,
+                        },
+                    ],
+                },
+                SceneSpec {
+                    name: "tonnetz drift".to_owned(),
+                    kill_on_exit: false,
+                    chain: vec![
+                        EffectSpec::Tonnetz {
+                            start: 0,
+                            minor: false,
+                            sequence: vec![Plr::R, Plr::L],
+                            lo: 48,
+                            hi: 79,
+                            include_played: false,
+                        },
+                        EffectSpec::VelocityCurve {
+                            gamma: 1.2,
+                            floor: 1,
+                            ceiling: 96,
+                        },
+                        EffectSpec::Echo {
+                            repeats: 3,
+                            time: TimeSpec::Beats(1.0),
+                            decay: 0.55,
+                            transpose: 0,
+                        },
+                    ],
+                },
+            ],
+        }
+    );
+}
+
+#[test]
+fn tintinnabuli_defaults() {
+    assert_eq!(
+        parse_chain("tintinnabuli root=\"a\""),
+        vec![EffectSpec::Tintinnabuli {
+            root: 9,
+            minor: true,
+            position: 1,
+            direction: TDirection::Superior,
+            level: 0.8,
+        }]
+    );
+}
+
+#[test]
+fn tintinnabuli_full_form() {
+    assert_eq!(
+        parse_chain(
+            "tintinnabuli root=\"db\" minor=false position=2 direction=\"alternating\" level=0.5"
+        ),
+        vec![EffectSpec::Tintinnabuli {
+            root: 1,
+            minor: false,
+            position: 2,
+            direction: TDirection::Alternating,
+            level: 0.5,
+        }]
+    );
+}
+
+#[test]
+fn tintinnabuli_directions() {
+    let chain = parse_chain(
+        "tintinnabuli root=\"c\" direction=\"superior\"\n\
+         tintinnabuli root=\"c\" direction=\"inferior\"\n\
+         tintinnabuli root=\"c\" direction=\"alternating\"",
+    );
+    let directions: Vec<_> = chain
+        .iter()
+        .map(|spec| match spec {
+            EffectSpec::Tintinnabuli { direction, .. } => *direction,
+            other => panic!("expected tintinnabuli, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        directions,
+        vec![
+            TDirection::Superior,
+            TDirection::Inferior,
+            TDirection::Alternating,
+        ]
+    );
+}
+
+#[test]
+fn tintinnabuli_requires_a_root() {
+    let msg = parse_err("tintinnabuli");
+    assert!(
+        msg.contains("root"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn tintinnabuli_bad_direction_is_rejected() {
+    let msg = parse_err("tintinnabuli root=\"c\" direction=\"sideways\"");
+    assert!(
+        msg.contains("sideways") && msg.contains("superior") && msg.contains("inferior"),
+        "error should show the bad direction and the alternatives: {msg}"
+    );
+}
+
+#[test]
+fn tintinnabuli_range_errors() {
+    let msg = parse_err("tintinnabuli root=\"c\" position=0");
+    assert!(
+        msg.contains("tintinnabuli") && msg.contains("position") && msg.contains("1..=2"),
+        "{msg}"
+    );
+    let msg = parse_err("tintinnabuli root=\"c\" position=3");
+    assert!(msg.contains("1..=2") && msg.contains("3"), "{msg}");
+    let msg = parse_err("tintinnabuli root=\"c\" level=1.5");
+    assert!(msg.contains("level") && msg.contains("0..=1"), "{msg}");
+    let msg = parse_err("tintinnabuli root=\"c\" level=-0.1");
+    assert!(msg.contains("0..=1"), "lower bound: {msg}");
+}
+
+#[test]
+fn note_names_and_numbers_are_interchangeable() {
+    // The documented spellings all land on the same pitch class, through
+    // real nodes: a note name with a flat, its sharp twin, and the raw
+    // number parse identically.
+    assert_eq!(
+        parse_chain("tintinnabuli root=\"db\""),
+        parse_chain("tintinnabuli root=\"1\"")
+    );
+    assert_eq!(
+        parse_chain("tintinnabuli root=\"C#\""),
+        parse_chain("tintinnabuli root=\"db\"")
+    );
+    assert_eq!(
+        parse_chain("negative-harmony tonic=\"F#\""),
+        parse_chain("negative-harmony tonic=\"6\"")
+    );
+    assert_eq!(
+        parse_chain("tonnetz start=\"bb\""),
+        parse_chain("tonnetz start=\"10\"")
+    );
+}
+
+#[test]
+fn bad_note_names_are_rejected() {
+    let msg = parse_err("tintinnabuli root=\"h\"");
+    assert!(
+        msg.contains("tintinnabuli")
+            && msg.contains("root")
+            && msg.contains("\"h\"")
+            && msg.contains("f#"),
+        "error should name the property, the value, and the accepted forms: {msg}"
+    );
+    let msg = parse_err("negative-harmony tonic=\"cb#\"");
+    assert!(
+        msg.contains("negative-harmony") && msg.contains("cb#"),
+        "{msg}"
+    );
+    let msg = parse_err("tonnetz start=\"12\"");
+    assert!(
+        msg.contains("tonnetz") && msg.contains("\"12\"") && msg.contains("11"),
+        "numbers stop at 11: {msg}"
+    );
+}
+
+#[test]
+fn mode_lock_defaults() {
+    assert_eq!(
+        parse_chain("mode-lock mode=3"),
+        vec![EffectSpec::ModeLock {
+            mode: 3,
+            transposition: 0,
+            snap: SieveSnap::Nearest,
+        }]
+    );
+}
+
+#[test]
+fn mode_lock_full_form() {
+    assert_eq!(
+        parse_chain("mode-lock mode=7 transposition=11 snap=\"drop\""),
+        vec![EffectSpec::ModeLock {
+            mode: 7,
+            transposition: 11,
+            snap: SieveSnap::Drop,
+        }]
+    );
+}
+
+#[test]
+fn mode_lock_snap_modes() {
+    let chain = parse_chain(
+        "mode-lock mode=1 snap=\"nearest\"\n\
+         mode-lock mode=1 snap=\"up\"\n\
+         mode-lock mode=1 snap=\"down\"\n\
+         mode-lock mode=1 snap=\"drop\"",
+    );
+    let snaps: Vec<_> = chain
+        .iter()
+        .map(|spec| match spec {
+            EffectSpec::ModeLock { snap, .. } => *snap,
+            other => panic!("expected mode-lock, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        snaps,
+        vec![
+            SieveSnap::Nearest,
+            SieveSnap::Up,
+            SieveSnap::Down,
+            SieveSnap::Drop,
+        ]
+    );
+}
+
+#[test]
+fn mode_lock_requires_a_mode() {
+    let msg = parse_err("mode-lock");
+    assert!(
+        msg.contains("mode"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn mode_lock_range_errors() {
+    let msg = parse_err("mode-lock mode=0");
+    assert!(
+        msg.contains("mode-lock") && msg.contains("mode") && msg.contains("1..=7"),
+        "{msg}"
+    );
+    let msg = parse_err("mode-lock mode=8");
+    assert!(msg.contains("1..=7") && msg.contains("8"), "{msg}");
+    let msg = parse_err("mode-lock mode=1 transposition=12");
+    assert!(
+        msg.contains("transposition") && msg.contains("0..=11") && msg.contains("12"),
+        "{msg}"
+    );
+}
+
+#[test]
+fn mode_lock_bad_snap_is_rejected() {
+    let msg = parse_err("mode-lock mode=1 snap=\"sideways\"");
+    assert!(
+        msg.contains("mode-lock") && msg.contains("sideways") && msg.contains("nearest"),
+        "error should show the bad snap and the alternatives: {msg}"
+    );
+}
+
+#[test]
+fn negative_harmony_defaults() {
+    assert_eq!(
+        parse_chain("negative-harmony tonic=\"c\""),
+        vec![EffectSpec::NegativeHarmony {
+            tonic: 0,
+            add: false,
+            level: 0.8,
+        }]
+    );
+}
+
+#[test]
+fn negative_harmony_add_mode() {
+    assert_eq!(
+        parse_chain("negative-harmony tonic=\"eb\" mode=\"add\" level=0.4"),
+        vec![EffectSpec::NegativeHarmony {
+            tonic: 3,
+            add: true,
+            level: 0.4,
+        }]
+    );
+    // level is allowed with mode="replace" too, even though only the
+    // added mirror uses it.
+    assert_eq!(
+        parse_chain("negative-harmony tonic=\"c\" mode=\"replace\" level=0.4"),
+        vec![EffectSpec::NegativeHarmony {
+            tonic: 0,
+            add: false,
+            level: 0.4,
+        }]
+    );
+}
+
+#[test]
+fn negative_harmony_requires_a_tonic() {
+    let msg = parse_err("negative-harmony");
+    assert!(
+        msg.contains("tonic"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn negative_harmony_bad_mode_is_rejected() {
+    let msg = parse_err("negative-harmony tonic=\"c\" mode=\"invert\"");
+    assert!(
+        msg.contains("invert") && msg.contains("replace") && msg.contains("add"),
+        "error should show the bad mode and the alternatives: {msg}"
+    );
+}
+
+#[test]
+fn negative_harmony_level_out_of_range_is_rejected() {
+    let msg = parse_err("negative-harmony tonic=\"c\" level=1.5");
+    assert!(
+        msg.contains("negative-harmony") && msg.contains("level") && msg.contains("0..=1"),
+        "{msg}"
+    );
+    let msg = parse_err("negative-harmony tonic=\"c\" level=-0.1");
+    assert!(msg.contains("0..=1"), "lower bound: {msg}");
+}
+
+#[test]
+fn tonnetz_defaults() {
+    assert_eq!(
+        parse_chain("tonnetz start=\"c\""),
+        vec![EffectSpec::Tonnetz {
+            start: 0,
+            minor: false,
+            sequence: vec![Plr::R, Plr::L],
+            lo: 48,
+            hi: 79,
+            include_played: false,
+        }]
+    );
+}
+
+#[test]
+fn tonnetz_full_form() {
+    assert_eq!(
+        parse_chain(
+            "tonnetz start=\"f#\" minor=true sequence=\"PLR\" lo=36 hi=96 include-played=true"
+        ),
+        vec![EffectSpec::Tonnetz {
+            start: 6,
+            minor: true,
+            sequence: vec![Plr::P, Plr::L, Plr::R],
+            lo: 36,
+            hi: 96,
+            include_played: true,
+        }]
+    );
+}
+
+#[test]
+fn tonnetz_requires_a_start() {
+    let msg = parse_err("tonnetz");
+    assert!(
+        msg.contains("start"),
+        "error should name the missing property: {msg}"
+    );
+}
+
+#[test]
+fn tonnetz_bad_sequence_letter_is_named() {
+    let msg = parse_err("tonnetz start=\"c\" sequence=\"rlx\"");
+    assert!(
+        msg.contains("tonnetz") && msg.contains("'x'") && msg.contains("p, l, and r"),
+        "error should name the bad letter and the alphabet: {msg}"
+    );
+}
+
+#[test]
+fn tonnetz_empty_sequence_is_rejected() {
+    let msg = parse_err("tonnetz start=\"c\" sequence=\"\"");
+    assert!(
+        msg.contains("tonnetz") && msg.contains("empty"),
+        "error should state the constraint: {msg}"
+    );
+}
+
+#[test]
+fn tonnetz_range_errors() {
+    let msg = parse_err("tonnetz start=\"c\" hi=128");
+    assert!(
+        msg.contains("tonnetz") && msg.contains("0..=127") && msg.contains("128"),
+        "{msg}"
+    );
+    let msg = parse_err("tonnetz start=\"c\" lo=80 hi=79");
+    assert!(msg.contains("lo=80"), "lo must not exceed hi: {msg}");
+}
+
+#[test]
+fn complement_pad_defaults() {
+    assert_eq!(
+        parse_chain("complement-pad"),
+        vec![EffectSpec::ComplementPad {
+            lo: 60,
+            hi: 84,
+            vel: 18,
+        }]
+    );
+}
+
+#[test]
+fn complement_pad_full_form() {
+    assert_eq!(
+        parse_chain("complement-pad lo=48 hi=96 vel=30"),
+        vec![EffectSpec::ComplementPad {
+            lo: 48,
+            hi: 96,
+            vel: 30,
+        }]
+    );
+}
+
+#[test]
+fn complement_pad_range_errors() {
+    let msg = parse_err("complement-pad vel=0");
+    assert!(
+        msg.contains("complement-pad") && msg.contains("vel") && msg.contains("1..=127"),
+        "{msg}"
+    );
+    let msg = parse_err("complement-pad vel=128");
+    assert!(msg.contains("1..=127") && msg.contains("128"), "{msg}");
+    let msg = parse_err("complement-pad hi=128");
+    assert!(msg.contains("0..=127") && msg.contains("128"), "{msg}");
+    let msg = parse_err("complement-pad lo=90 hi=60");
+    assert!(msg.contains("lo=90"), "lo must not exceed hi: {msg}");
 }
 
 #[test]

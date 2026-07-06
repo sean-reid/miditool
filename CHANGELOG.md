@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.11](https://github.com/sean-reid/miditool/compare/v0.1.10...v0.1.11) (2026-07-06)
+
+
+### Features
+
+* config nodes and help for the generator wave ([4d38ccf](https://github.com/sean-reid/miditool/commit/4d38ccfef52ecadf930558d48eb69fa54c70d1a3))
+* five free-running generators ([e68f162](https://github.com/sean-reid/miditool/commit/e68f162c751c08b78e428a725ce2c016636cddb7))
+* the graph runs on a ticking thread, generators play without input ([0dbafdf](https://github.com/sean-reid/miditool/commit/0dbafdfbcc61cf4120d475554bd2de58fd77d71e))
+* tick pass for free-running effects ([bdec8bb](https://github.com/sean-reid/miditool/commit/bdec8bb9a98bf14e99c0f4ceab0f13efbfbfc45d))
+
+
+### Bug Fixes
+
+* mark release prs tagged once dist creates the tag ([f94af7b](https://github.com/sean-reid/miditool/commit/f94af7b32ae90a44ff8ad3890448878d5c9d90d7))
+
 ## [0.1.10](https://github.com/sean-reid/miditool/compare/v0.1.9...v0.1.10) (2026-07-06)
 
 

@@ -21,10 +21,33 @@ jobs:
       prs_created: ${{ steps.rp.outputs.prs_created }}
       pr: ${{ steps.rp.outputs.pr }}
     steps:
+      # A release PR generated while a drafted release is still building
+      # has no tag to diff against and degrades to a full-history
+      # changelog. Skip PR generation whenever a draft is pending or this
+      # very push is the release merge (its draft is created in this run);
+      # the publish-release workflow redispatches after the tag exists.
+      - name: Decide whether a release PR can be generated safely
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          drafts=$(gh release list --repo "$GITHUB_REPOSITORY" --json isDraft -q '[.[] | select(.isDraft)] | length')
+          case "$HEAD_MESSAGE" in
+            "chore(main): release"*) merge=true ;;
+            *) merge=false ;;
+          esac
+          if [ "$drafts" != "0" ] || [ "$merge" = "true" ]; then
+            echo "skip_pr=true" >> "$GITHUB_OUTPUT"
+            echo "deferring release PR generation (drafts pending: $drafts, release merge: $merge)"
+          else
+            echo "skip_pr=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         id: rp
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          skip-github-pull-request: ${{ steps.gate.outputs.skip_pr == 'true' }}
       # Tags made with GITHUB_TOKEN cannot trigger workflows, so the
       # binary build is dispatched explicitly when a release is cut.
       - name: Dispatch the binary build

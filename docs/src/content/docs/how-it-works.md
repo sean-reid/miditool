@@ -11,7 +11,7 @@ Events flow one way:
 keyboard  ->  miditool  ->  virtual port ("miditool Out")  ->  DAW
 ```
 
-miditool opens your keyboard as an input, runs every event through the effect graph described by your config, and writes the result to a virtual output port. To the DAW, that port looks like any other MIDI device. The processing path is allocation-free and adds no audible latency; [`miditool bench`](/miditool/reference/cli/#miditool-bench) measures the whole round trip on your machine.
+miditool opens your keyboard as an input, runs every event through the effect graph described by your config, and writes the result to a virtual output port. The generator effects, [`continuum`](/miditool/effects/continuum/) through [`continuator`](/miditool/effects/continuator/), also run on a steady internal tick, so their notes keep flowing even when nothing arrives from the keyboard. To the DAW, that port looks like any other MIDI device. The processing path is allocation-free and adds no audible latency; [`miditool bench`](/miditool/reference/cli/#miditool-bench) measures the whole round trip on your machine.
 
 ## Seeded determinism
 

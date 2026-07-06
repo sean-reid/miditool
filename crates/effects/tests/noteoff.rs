@@ -9,11 +9,12 @@ use miditool_core::{
 };
 use miditool_effects::{
     AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, Channelize, ClusterAnchor,
-    ClusterFist, ClusterKind, CrescendoShape, Delay, DensityGovernor, DurationLottery, Echo,
-    EuclideanGate, FeldmanField, KeyDist, Klangfarben, LooseKeys, MassCrescendo, NoteRoulette,
-    PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowForm, RowSnap,
-    ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap, Stutter, Talea, Telescope, Transpose,
-    VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
+    ClusterFist, ClusterKind, ComplementPad, CrescendoShape, Delay, DensityGovernor,
+    DurationLottery, Echo, EuclideanGate, FeldmanField, KeyDist, Klangfarben, LooseKeys,
+    MassCrescendo, ModeLock, NegativeHarmony, NoteRoulette, Plr, PoissonCloud, Quantize,
+    RegistralScatter, ResonanceHalo, Restrike, RingMod, RowForm, RowSnap, ShuffleLock, ShuffleMode,
+    SieveQuantizer, SieveSnap, Stutter, TDirection, Talea, Telescope, Tintinnabuli, Tonnetz,
+    Transpose, VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
 };
 use proptest::prelude::*;
 
@@ -63,6 +64,18 @@ fn snaps() -> impl Strategy<Value = SieveSnap> {
         Just(SieveSnap::Down),
         Just(SieveSnap::Drop),
     ]
+}
+
+fn tdirections() -> impl Strategy<Value = TDirection> {
+    prop_oneof![
+        Just(TDirection::Superior),
+        Just(TDirection::Inferior),
+        Just(TDirection::Alternating),
+    ]
+}
+
+fn plr_sequences() -> impl Strategy<Value = Vec<Plr>> {
+    prop::collection::vec(prop_oneof![Just(Plr::P), Just(Plr::L), Just(Plr::R)], 0..6)
 }
 
 fn shapes() -> impl Strategy<Value = CrescendoShape> {
@@ -580,6 +593,70 @@ proptest! {
         let fx = MassCrescendo::new(period, depth, shape);
         assert_no_orphans(&mut leaf(fx), &balanced(&steps));
     }
+
+    // Raw sequences: the component pair covers the T-voice, and an orphan
+    // note-off releases the played key alone.
+    #[test]
+    fn tintinnabuli_no_orphans(
+        steps in steps(),
+        root_pc: u8,
+        minor: bool,
+        position in 0u8..=4,
+        direction in tdirections(),
+        level in 0.0f32..=1.5,
+    ) {
+        let fx = Tintinnabuli::new(root_pc, minor, position, direction, level);
+        assert_no_orphans(&mut leaf(fx), &steps);
+    }
+
+    #[test]
+    fn mode_lock_no_orphans(
+        steps in steps(),
+        mode in 0u8..=9,
+        transposition: u8,
+        snap in snaps(),
+    ) {
+        assert_no_orphans(&mut leaf(ModeLock::new(mode, transposition, snap)), &steps);
+    }
+
+    #[test]
+    fn negative_harmony_no_orphans(
+        steps in steps(),
+        tonic_pc: u8,
+        add: bool,
+        level in 0.0f32..=1.5,
+    ) {
+        assert_no_orphans(&mut leaf(NegativeHarmony::new(tonic_pc, add, level)), &steps);
+    }
+
+    // Raw sequences: orphan note-offs are dropped and flush releases every
+    // remembered set. Sequences stay short: flush emits up to 4 offs per
+    // active note, and that total must fit one EventBuf.
+    #[test]
+    fn tonnetz_no_orphans(
+        steps in steps(),
+        root_pc: u8,
+        minor: bool,
+        sequence in plr_sequences(),
+        lo in 0u8..128,
+        hi in 0u8..128,
+        include_played: bool,
+    ) {
+        let fx = Tonnetz::new(root_pc, minor, &sequence, lo, hi, include_played);
+        assert_no_orphans(&mut leaf(fx), &steps[..steps.len().min(24)]);
+    }
+
+    // Raw sequences: the pad diffs on every on and off, and flush releases
+    // the pad plus one off per outstanding pass-through note-on.
+    #[test]
+    fn complement_pad_no_orphans(
+        steps in steps(),
+        lo in 0u8..128,
+        hi in 0u8..128,
+        vel: u8,
+    ) {
+        assert_no_orphans(&mut leaf(ComplementPad::new(lo, hi, vel)), &steps);
+    }
 }
 
 /// Chain-stage truncation must never split a self-contained on/off pair.
@@ -853,4 +930,86 @@ fn time_and_dynamics_worst_case_fanout_fits_the_buffer() {
         assert!(out.len() <= MAX_FANOUT, "{name}: over MAX_FANOUT");
         assert_eq!(cx.dropped.load(Ordering::Relaxed), 0, "{name}: dropped");
     }
+}
+
+/// The widest configuration of each harmonizer, fed a note-on and then a
+/// retrigger of the same key, must fan out within one EventBuf and drop
+/// nothing.
+#[test]
+fn harmonizer_worst_case_fanout_fits_the_buffer() {
+    // Key 61 keeps the played key out of every triad here, so tonnetz
+    // with include_played reaches its full four keys.
+    let on = Event::new(
+        0,
+        EventKind::NoteOn {
+            ch: 0,
+            key: 61,
+            vel: 127,
+        },
+    );
+    let cases: Vec<(&str, Box<dyn Effect>, usize, usize)> = vec![
+        (
+            "tintinnabuli",
+            Box::new(Tintinnabuli::new(0, false, 2, TDirection::Alternating, 1.0)),
+            2,
+            2 + 2,
+        ),
+        (
+            "mode_lock",
+            Box::new(ModeLock::new(2, 0, SieveSnap::Nearest)),
+            1,
+            2,
+        ),
+        (
+            "negative_harmony",
+            Box::new(NegativeHarmony::new(0, true, 1.0)),
+            2,
+            2 + 2,
+        ),
+        (
+            "tonnetz",
+            Box::new(Tonnetz::new(0, false, &[Plr::P], 0, 127, true)),
+            4,
+            4 + 4,
+        ),
+    ];
+    for (name, mut fx, first, retrigger) in cases {
+        let cx = ProcCx::at(0);
+        let mut out = EventBuf::new();
+        fx.process(&on, &mut out, &cx);
+        assert_eq!(out.len(), first, "{name}: note-on fanout");
+        out.clear();
+        fx.process(&on, &mut out, &cx);
+        assert_eq!(out.len(), retrigger, "{name}: retrigger fanout");
+        assert!(out.len() <= MAX_FANOUT, "{name}: over MAX_FANOUT");
+        assert_eq!(cx.dropped.load(Ordering::Relaxed), 0, "{name}: dropped");
+    }
+
+    // The pad's widest moves: the first held note wakes 11 pad notes and
+    // releasing it retires them, 12 events each way with the
+    // pass-through.
+    let mut fx = ComplementPad::new(0, 127, 100);
+    let cx = ProcCx::at(0);
+    let mut out = EventBuf::new();
+    fx.process(&on, &mut out, &cx);
+    assert_eq!(out.len(), 1 + 11, "complement_pad note-on fanout");
+    out.clear();
+    fx.process(
+        &Event::new(
+            1,
+            EventKind::NoteOff {
+                ch: 0,
+                key: 61,
+                vel: 0,
+            },
+        ),
+        &mut out,
+        &cx,
+    );
+    assert_eq!(out.len(), 1 + 11, "complement_pad note-off fanout");
+    assert_eq!(
+        cx.dropped.load(Ordering::Relaxed),
+        0,
+        "complement_pad: dropped"
+    );
 }

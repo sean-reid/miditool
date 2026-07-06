@@ -10,13 +10,13 @@ use miditool_core::{
 use miditool_effects::{
     AccentGroups, AddedValue, AggregateGate, AntiAccent, BlockedKeys, BrownianWalker, Channelize,
     ClusterAnchor, ClusterFist, ClusterKind, ComplementPad, Continuator, Continuum, ContinuumOrder,
-    CrescendoShape, Delay, DensityGovernor, DurationLottery, Echo, EuclideanGate, FeldmanField,
-    Just as JustIntonation, KeyDist, Klangfarben, LooseKeys, MassCrescendo, Mechanico,
-    MetronomeSwarm, ModeLock, MpeParams, NegativeHarmony, NoteRoulette, OvertonePedal, Plr,
-    PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RingMod, RowForm, RowSnap,
-    Scordatura, ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap, SpectralHalo, Stutter,
-    TDirection, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose, VelDist, VelocityCurve,
-    VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
+    CrescendoShape, CrippledLooper, Delay, DensityGovernor, DurationLottery, Echo, EuclideanGate,
+    FeldmanField, Just as JustIntonation, KeyDist, Klangfarben, LooseKeys, MassCrescendo,
+    Mechanico, MetronomeSwarm, ModeLock, MpeParams, NegativeHarmony, NoteRoulette, OvertonePedal,
+    Plr, PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RetrogradeBuffer,
+    RingMod, RowForm, RowSnap, Scordatura, ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap,
+    SpectralHalo, Stutter, TDirection, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose, VelDist,
+    VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
 };
 use proptest::prelude::*;
 
@@ -220,6 +220,76 @@ fn assert_no_orphans_ticked(node: &mut Node, steps: &[Step]) {
         drive(node, &mut tracker, now, None);
     }
     for _ in 0..12 {
+        now += 800_000_000;
+        drive(node, &mut tracker, now, None);
+    }
+    let cx = ProcCx::at(now);
+    let mut out = EventBuf::new();
+    node.flush(&mut out, &cx);
+    for e in &out {
+        tracker.observe(&e.kind);
+    }
+    assert_eq!(tracker.active(), 0, "orphaned notes at the output");
+}
+
+/// Tick-aware harness for the pedal-capture generators: like
+/// `assert_no_orphans_ticked`, but the capture pedal is driven through
+/// the sequence (down at the start like the resonance-halo precedent, up
+/// midway so a phrase is captured and playback begins, and a final
+/// down/up pair so the mid-playback stop and a second capture run too),
+/// with ticks interleaved throughout. Raw sequences: these effects pass
+/// the player's notes through and their flush winds the pass-through
+/// down alongside whatever the machine still has sounding.
+fn assert_no_orphans_ticked_pedal(node: &mut Node, steps: &[Step], pedal_cc: u8) {
+    fn drive(node: &mut Node, tracker: &mut NoteTracker, now: u64, ev: Option<EventKind>) {
+        let cx = ProcCx::at(now);
+        let mut out = EventBuf::new();
+        match ev {
+            Some(kind) => node.process(&Event::new(now, kind), &mut out, &cx),
+            None => node.tick(now, &mut out, &cx),
+        }
+        for e in &out {
+            tracker.observe(&e.kind);
+        }
+    }
+    let pedal = |value: u8| EventKind::ControlChange {
+        ch: 0,
+        cc: pedal_cc,
+        value,
+    };
+    let mut tracker = NoteTracker::new();
+    let mut now: u64 = 0;
+    drive(node, &mut tracker, now, Some(pedal(127)));
+    let half = steps.len() / 2;
+    for (i, step) in steps.iter().enumerate() {
+        if i == half {
+            now += 1_000_000;
+            drive(node, &mut tracker, now, Some(pedal(0)));
+        }
+        now += 1_000_000 + step.vel as u64 * 9_000_000;
+        drive(node, &mut tracker, now, Some(step_kind(step)));
+        now += 2_000_000 + step.key as u64 * 500_000;
+        drive(node, &mut tracker, now, None);
+    }
+    // Lift the pedal (a no-op if it already lifted midway) and let the
+    // playback or loop run under trailing ticks.
+    now += 1_000_000;
+    drive(node, &mut tracker, now, Some(pedal(0)));
+    for _ in 0..6 {
+        now += 800_000_000;
+        drive(node, &mut tracker, now, None);
+    }
+    // Stomp mid-playback: the machine must silence itself, capture
+    // nothing, and stay quiet after the empty pedal-up.
+    now += 1_000_000;
+    drive(node, &mut tracker, now, Some(pedal(127)));
+    for _ in 0..3 {
+        now += 800_000_000;
+        drive(node, &mut tracker, now, None);
+    }
+    now += 1_000_000;
+    drive(node, &mut tracker, now, Some(pedal(0)));
+    for _ in 0..6 {
         now += 800_000_000;
         drive(node, &mut tracker, now, None);
     }
@@ -771,6 +841,29 @@ proptest! {
     ) {
         let fx = Continuator::new(seed, idle, max_notes);
         assert_no_orphans_ticked(&mut leaf(fx), &steps);
+    }
+
+    // The pedal-capture generators pass the player's notes through, so
+    // they run on raw sequences with the pedal driven around them; every
+    // machine voice is released from their bookkeeping by tick,
+    // pedal-down, or flush, and flush winds down the pass-through.
+    #[test]
+    fn crippled_looper_no_orphans(
+        steps in steps(),
+        seed: u64,
+        max_notes in 0u8..=64,
+    ) {
+        let fx = CrippledLooper::new(seed, CC_SUSTAIN, max_notes);
+        assert_no_orphans_ticked_pedal(&mut leaf(fx), &steps, CC_SUSTAIN);
+    }
+
+    #[test]
+    fn retrograde_buffer_no_orphans(
+        steps in steps(),
+        speed in 0.0f32..=8.0,
+    ) {
+        let fx = RetrogradeBuffer::new(CC_SUSTAIN, speed);
+        assert_no_orphans_ticked_pedal(&mut leaf(fx), &steps, CC_SUSTAIN);
     }
 
     // Raw sequences for the MPE effects: the pool's steal-offs, the

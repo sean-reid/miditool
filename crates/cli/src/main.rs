@@ -199,11 +199,10 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
         _ => PathBuf::from("."),
     };
 
-    // Control gestures resolve against the startup scene list, once.
-    // The reloader below rebuilds scene graphs on config edits, but in
-    // v1 gestures keep these original indices: a reload that reorders
-    // or renames scenes leaves next/prev/goto pointing at the old
-    // positions until a restart.
+    // goto gestures resolve to scene indices against the startup scene
+    // list, once; a reload that reorders or renames scenes leaves them
+    // pointing at the old positions until a restart. next-scene and
+    // prev-scene step the live table and are unaffected.
     let control = cfg
         .control
         .clone()

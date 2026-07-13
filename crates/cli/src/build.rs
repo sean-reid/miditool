@@ -576,10 +576,10 @@ fn sieve_snap(snap: SieveSnap) -> miditool_effects::SieveSnap {
 /// dwells resolve against the tempo.
 ///
 /// Resolution happens once, here. A live reload rebuilds scene graphs
-/// but does not re-resolve gestures: in v1 they keep their original
-/// indices, so a reload that reorders or renames scenes leaves
-/// next/prev/goto pointing at the old positions until a restart, as
-/// documented on `miditool_config::ControlSpec`.
+/// but does not re-resolve goto targets: they keep their original
+/// indices until a restart, as documented on
+/// `miditool_config::ControlSpec`. next-scene and prev-scene step the
+/// live scene table and follow reloads.
 pub fn control_def(
     spec: miditool_config::ControlSpec,
     scenes: &[miditool_config::SceneSpec],

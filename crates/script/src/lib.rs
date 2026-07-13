@@ -71,7 +71,10 @@
 //!
 //! `rng` and `rng_range` are deterministic streams derived from the seed:
 //! the same seed and the same input events always produce the same
-//! performance. Prefer them over `math.random`, which is not seeded.
+//! performance. Luau's own `math.random` is also seeded from the script
+//! seed, so nothing in the sandbox is unseeded; the injected helpers are
+//! still preferred because their streams are independent of library
+//! internals.
 //!
 //! Script globals persist between events, so stateful effects (counters,
 //! note maps as tables) are natural:
@@ -417,6 +420,12 @@ impl Effect for ScriptEffect {
 fn install_globals(lua: &Lua, name: &str, seed: u64) -> mlua::Result<()> {
     let globals = lua.globals();
     globals.set("seed", seed as f64)?;
+
+    // Luau's own math.random is seeded from the script seed, so even a
+    // script that reaches for it stays deterministic per seed.
+    lua.load(format!("math.randomseed({seed})"))
+        .set_name("=seed math.random")
+        .exec()?;
 
     let rng = Mutex::new(seeded(seed, 0));
     globals.set(
@@ -938,6 +947,32 @@ mod tests {
             return { kind = "note-on", key = rng_range(0, 127), vel = 1 + math.floor(rng() * 127) }
         end
     "#;
+
+    #[test]
+    fn math_random_is_seeded_too() {
+        let src = r#"
+            function on_event(ev)
+                if ev.kind == "note-on" then
+                    ev.vel = 1 + math.floor(math.random() * 126)
+                    return ev
+                end
+            end
+        "#;
+        let mut a = ScriptEffect::from_source("a", src, 5).unwrap();
+        let mut b = ScriptEffect::from_source("b", src, 5).unwrap();
+        let mut c = ScriptEffect::from_source("c", src, 6).unwrap();
+        let mut same = true;
+        let mut all_match_c = true;
+        for key in [60u8, 62, 64, 65, 67] {
+            let ra = run(&mut a, on(key));
+            let rb = run(&mut b, on(key));
+            let rc = run(&mut c, on(key));
+            same &= ra == rb;
+            all_match_c &= ra == rc;
+        }
+        assert!(same, "math.random must be deterministic per seed");
+        assert!(!all_match_c, "a different seed must change math.random");
+    }
 
     #[test]
     fn same_seed_same_output() {

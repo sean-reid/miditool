@@ -47,11 +47,11 @@
 //! scene of a bare-effects config counts). The dwells are plain
 //! duration strings, each at least 2s with `dwell-lo <= dwell-hi`: the
 //! `beats=` convention admits one beat-valued property per node, and
-//! the dwell pair needs two, so neither takes it. Gestures resolve to
-//! scene indices when the engine starts; in v1 a live config reload
-//! does not re-resolve them, so a reload that reorders or renames
-//! scenes leaves next/prev/goto pointing at the old positions until a
-//! restart.
+//! the dwell pair needs two, so neither takes it. goto gestures resolve
+//! to scene indices when the engine starts and a live reload does not
+//! re-resolve them, so reordering or renaming scenes leaves goto
+//! pointing at the old positions until a restart; next-scene and
+//! prev-scene step the live scene table and follow reloads.
 //!
 //! Besides the built-in effects, a chain can hold a `script` node
 //! (`script "wedge.lua" seed=42`) that runs a Luau file on every event.
@@ -102,11 +102,11 @@ pub struct Config {
 /// Every configured key is a MIDI key number `0..=127`, and each key
 /// serves exactly one role. Goto scene names are validated against the
 /// config's scenes (the implicit "main" scene of a bare-effects config
-/// counts), but they resolve to scene indices only when the engine
-/// starts. In v1 a live config reload does not re-resolve them:
-/// gestures keep their startup indices, so a reload that reorders or
-/// renames scenes leaves next/prev/goto pointing at the old positions
-/// until a restart.
+/// counts), but goto targets resolve to scene indices only when the
+/// engine starts, and a live reload does not re-resolve them: a reload
+/// that reorders or renames scenes leaves goto pointing at the old
+/// positions until a restart. next-scene and prev-scene step the live
+/// scene table and are unaffected.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ControlSpec {
     /// Key that steps to the next scene, from `next-scene key=`. Legal

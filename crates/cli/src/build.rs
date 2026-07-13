@@ -13,9 +13,9 @@ use miditool_effects::{
     DurationLottery, Echo, EuclideanGate, FeldmanField, Just, KeyDist, Klangfarben, LooseKeys,
     MassCrescendo, Mechanico, MetronomeSwarm, ModeLock, NegativeHarmony, NoteRoulette,
     OvertonePedal, PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike,
-    RetrogradeBuffer, RingMod, RowSnap, Scordatura, ShuffleLock, SieveQuantizer, SpectralHalo,
-    Stutter, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose, VelDist, VelocityCurve,
-    VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
+    RetrogradeBuffer, RingMod, RowSnap, Scordatura, ShuffleLock, SieveQuantizer, Snap,
+    SpectralHalo, Stutter, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose, VelDist,
+    VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
 };
 use miditool_io::OutputTarget;
 
@@ -329,6 +329,15 @@ fn build_node(spec: EffectSpec, tempo: f32, base: &Path) -> Result<Node, String>
         EffectSpec::Quantize { grid, strength } => {
             Node::Leaf(Box::new(Quantize::new(grid.to_nanos(tempo), strength)))
         }
+        EffectSpec::Snap {
+            division,
+            strength,
+            follow,
+            bpm_lo,
+            bpm_hi,
+        } => Node::Leaf(Box::new(Snap::new(
+            division, strength, follow, bpm_lo, bpm_hi,
+        ))),
         EffectSpec::Talea { durations } => {
             // The config checks millisecond entries against 1ms..=60s;
             // beat entries are only comparable here, once the tempo has

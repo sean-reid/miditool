@@ -111,6 +111,7 @@ export default defineConfig({
             { label: "stutter", slug: "effects/stutter" },
             { label: "euclidean-gate", slug: "effects/euclidean-gate" },
             { label: "quantize", slug: "effects/quantize" },
+            { label: "snap", slug: "effects/snap" },
             { label: "talea", slug: "effects/talea" },
             { label: "added-value", slug: "effects/added-value" },
           ],

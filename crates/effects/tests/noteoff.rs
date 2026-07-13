@@ -15,8 +15,8 @@ use miditool_effects::{
     Mechanico, MetronomeSwarm, ModeLock, MpeParams, NegativeHarmony, NoteRoulette, OvertonePedal,
     Plr, PoissonCloud, Quantize, RegistralScatter, ResonanceHalo, Restrike, RetrogradeBuffer,
     RingMod, RowForm, RowSnap, Scordatura, ShuffleLock, ShuffleMode, SieveQuantizer, SieveSnap,
-    SpectralHalo, Stutter, TDirection, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose, VelDist,
-    VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
+    Snap, SpectralHalo, Stutter, TDirection, Talea, Telescope, Tintinnabuli, Tonnetz, Transpose,
+    VelDist, VelocityCurve, VelocityDice, VelocityInvert, VelocityRouter, WedgeMirror,
 };
 use proptest::prelude::*;
 
@@ -629,6 +629,21 @@ proptest! {
         assert_no_orphans(&mut leaf(Quantize::new(grid, strength)), &steps);
     }
 
+    // Raw sequences like quantize: deferred ons emit their offs late but
+    // balanced, and flush releases whatever is still pending.
+    #[test]
+    fn snap_no_orphans(
+        steps in steps(),
+        division: u8,
+        strength in 0.0f32..=1.5,
+        follow in 0.0f32..=1.5,
+        bpm_lo in 0.0f32..=500.0,
+        bpm_hi in 0.0f32..=500.0,
+    ) {
+        let fx = Snap::new(division, strength, follow, bpm_lo, bpm_hi);
+        assert_no_orphans(&mut leaf(fx), &steps);
+    }
+
     // Raw sequences on purpose: the talea swallows the player's offs and
     // every on carries its own scheduled off, like the duration lottery.
     #[test]
@@ -1148,6 +1163,7 @@ fn time_and_dynamics_worst_case_fanout_fits_the_buffer() {
             2,
         ),
         ("quantize", Box::new(Quantize::new(u64::MAX, 1.0)), 1, 2),
+        ("snap", Box::new(Snap::new(16, 1.0, 1.0, 30.0, 300.0)), 1, 2),
         ("talea", Box::new(Talea::new(&[u64::MAX])), 2, 2),
         (
             "added_value",

@@ -982,6 +982,50 @@ fn effect(node: ast::Effect, tempo: f32, depth: usize) -> Result<EffectSpec, Con
                 strength.map_or(1.0, |ast::Number(v)| v),
             )?,
         },
+        E::Snap {
+            division,
+            strength,
+            follow,
+            bpm_lo,
+            bpm_hi,
+        } => {
+            let division = match division.unwrap_or(2) {
+                d @ (1 | 2 | 3 | 4 | 6 | 8 | 12 | 16) => d as u8,
+                other => {
+                    return Err(ConfigError::invalid(
+                        "snap",
+                        format!("division must be one of 1, 2, 3, 4, 6, 8, 12, or 16, got {other}"),
+                    ));
+                }
+            };
+            let bpm_lo = float_range(
+                "snap",
+                "bpm-lo",
+                bpm_lo.map_or(50.0, |ast::Number(v)| v),
+                30.0,
+                300.0,
+            )?;
+            let bpm_hi = float_range(
+                "snap",
+                "bpm-hi",
+                bpm_hi.map_or(180.0, |ast::Number(v)| v),
+                30.0,
+                300.0,
+            )?;
+            if bpm_lo >= bpm_hi {
+                return Err(ConfigError::invalid(
+                    "snap",
+                    format!("bpm-lo must be below bpm-hi, got {bpm_lo} and {bpm_hi}"),
+                ));
+            }
+            EffectSpec::Snap {
+                division,
+                strength: fraction("snap", "strength", strength.map_or(1.0, |ast::Number(v)| v))?,
+                follow: fraction("snap", "follow", follow.map_or(0.35, |ast::Number(v)| v))?,
+                bpm_lo,
+                bpm_hi,
+            }
+        }
         E::Talea { durations, beats } => {
             if durations.is_empty() || durations.len() > 32 {
                 return Err(ConfigError::invalid(

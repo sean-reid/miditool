@@ -265,6 +265,10 @@ effects
   quantize grid=\"125ms\" strength=1.0
       Pull events onto a time grid (default a quarter beat): strength
       1 snaps them exactly, lower values move them only part way.
+  snap division=2 strength=1.0 follow=0.35 bpm-lo=50 bpm-hi=180
+      Quantize to a pulse inferred from your own playing: the grid
+      follows your tempo and phase. division subdivides the beat
+      (1, 2, 3, 4, 6, 8, 12, 16); follow sets how hard you pull it.
   talea 250 500 250 1000
   talea 1 0.5 0.5 2 beats=true
       Lock notes to a repeating duration cycle, the medieval talea:

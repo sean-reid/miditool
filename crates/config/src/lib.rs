@@ -609,6 +609,18 @@ pub enum EffectSpec {
     /// onto the nearest `grid` line, lower values move them only part
     /// of the way.
     Quantize { grid: TimeSpec, strength: f32 },
+    /// Snap onsets to a pulse inferred from the playing itself: a grid
+    /// that follows the player's tempo and phase. `division` subdivides
+    /// the inferred beat (1, 2, 3, 4, 6, 8, 12, or 16), `strength` blends
+    /// the correction, `follow` sets how hard each onset pulls the grid,
+    /// and the bpm bounds confine what counts as the beat.
+    Snap {
+        division: u8,
+        strength: f32,
+        follow: f32,
+        bpm_lo: f32,
+        bpm_hi: f32,
+    },
     /// Lock note-ons to a repeating duration cycle, the medieval talea:
     /// `talea 250 500 250 1000` in milliseconds, or `talea 1 0.5 0.5 2
     /// beats=true` in beats against the tempo. Between 1 and 32 entries;

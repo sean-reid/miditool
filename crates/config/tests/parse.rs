@@ -4235,3 +4235,37 @@ fn moments_dwell_lo_must_not_exceed_dwell_hi() {
         "error should show both bounds: {msg}"
     );
 }
+
+#[test]
+fn snap_defaults_and_full_form() {
+    let cfg = parse("snap");
+    assert_eq!(
+        cfg.scenes[0].chain[0],
+        EffectSpec::Snap {
+            division: 2,
+            strength: 1.0,
+            follow: 0.35,
+            bpm_lo: 50.0,
+            bpm_hi: 180.0,
+        }
+    );
+    let cfg = parse("snap division=3 strength=0.8 follow=0.5 bpm-lo=60 bpm-hi=200");
+    assert_eq!(
+        cfg.scenes[0].chain[0],
+        EffectSpec::Snap {
+            division: 3,
+            strength: 0.8,
+            follow: 0.5,
+            bpm_lo: 60.0,
+            bpm_hi: 200.0,
+        }
+    );
+}
+
+#[test]
+fn snap_rejects_bad_values() {
+    assert!(parse_err("snap division=5").contains("1, 2, 3, 4, 6, 8, 12, or 16"));
+    assert!(parse_err("snap strength=1.5").contains("strength"));
+    assert!(parse_err("snap bpm-lo=200 bpm-hi=100").contains("below"));
+    assert!(parse_err("snap bpm-lo=10").contains("bpm-lo"));
+}

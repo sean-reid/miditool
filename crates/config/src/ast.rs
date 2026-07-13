@@ -551,6 +551,18 @@ pub(crate) enum Effect {
         #[knus(property)]
         strength: Option<Number>,
     },
+    Snap {
+        #[knus(property)]
+        division: Option<i64>,
+        #[knus(property)]
+        strength: Option<Number>,
+        #[knus(property)]
+        follow: Option<Number>,
+        #[knus(property(name = "bpm-lo"))]
+        bpm_lo: Option<Number>,
+        #[knus(property(name = "bpm-hi"))]
+        bpm_hi: Option<Number>,
+    },
     Talea {
         #[knus(arguments)]
         durations: Vec<Number>,

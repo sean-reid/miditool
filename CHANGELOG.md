@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.12](https://github.com/sean-reid/miditool/compare/v0.1.11...v0.1.12) (2026-07-13)
+
+
+### Features
+
+* config control block and form effect nodes ([049e538](https://github.com/sean-reid/miditool/commit/049e5381cd7568f027744c4fa0868bd90296a5db))
+* crippled looper and retrograde buffer ([8bc9885](https://github.com/sean-reid/miditool/commit/8bc988576026754b5fb58826d7444aebb86a4d5f))
+* keyboard gesture control and the moments sequencer ([ec4b8e1](https://github.com/sean-reid/miditool/commit/ec4b8e106214155972747722e1ce7d1b5f3dbf52))
+* snap, a quantizer that follows the player's pulse ([c68220c](https://github.com/sean-reid/miditool/commit/c68220c5b513fd27d34920b18e137657d18898c6))
+
 ## [0.1.11](https://github.com/sean-reid/miditool/compare/v0.1.10...v0.1.11) (2026-07-06)
 
 

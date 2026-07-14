@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.13](https://github.com/sean-reid/miditool/compare/v0.1.12...v0.1.13) (2026-07-14)
+
+
+### Bug Fixes
+
+* seed luau's math.random, correct gesture reload comments ([307128b](https://github.com/sean-reid/miditool/commit/307128b1c2f8a45fe493a2d3e14a69b608e619c9))
+
 ## [0.1.12](https://github.com/sean-reid/miditool/compare/v0.1.11...v0.1.12) (2026-07-13)
 
 

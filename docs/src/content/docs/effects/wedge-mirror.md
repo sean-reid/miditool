@@ -23,7 +23,12 @@ The same seed gives the same coin tosses forever; see [Seeds](/miditool/configur
 input "Roland"
 output virtual="miditool Out"
 
-wedge-mirror axis=60          // everything inverted about middle C
+// A mirror canon in one line. Around D, the white keys map onto
+// themselves, so diatonic playing answers itself in the key.
+fork {
+    pass
+    wedge-mirror axis=62
+}
 ```
 
 ## Try this

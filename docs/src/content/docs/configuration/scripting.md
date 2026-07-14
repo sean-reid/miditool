@@ -49,14 +49,19 @@ What `on_event` returns decides what flows downstream:
 - a table: one event is emitted. Mutating `ev` and returning it is the usual move.
 - an array of tables: several events are emitted, in order.
 
-An emitted table may carry `delay_ms` to schedule it late:
+An emitted table may carry `delay_ms` to schedule it late. But the reason to reach for a script is logic no built-in can express. Nothing in KDL can see the time between your notes; a script can, and can turn hesitation into emphasis:
 
 ```lua
+-- The longer the silence before a note, the harder it lands.
+local last_ms = 0
+
 function on_event(ev)
-    if ev.kind == "note-on" or ev.kind == "note-off" then
-        local shadow = { kind = ev.kind, ch = ev.ch, key = ev.key + 7,
-                         vel = ev.vel, delay_ms = 90 }
-        return { ev, shadow } -- the note, plus a fifth 90ms behind it
+    if ev.kind == "note-on" then
+        local rest = math.min(ev.time_ms - last_ms, 3000)
+        last_ms = ev.time_ms
+        local scaled = math.floor(ev.vel * (0.6 + rest / 3000))
+        ev.vel = math.max(1, math.min(127, scaled))
+        return ev
     end
 end
 ```

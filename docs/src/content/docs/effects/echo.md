@@ -26,8 +26,11 @@ Exactly one of `time=` or `beats=` must be given; see [Time and tempo](/miditool
 ```kdl title="miditool.kdl"
 input "Roland"
 output virtual="miditool Out"
+tempo 96
 
-echo repeats=4 beats=0.5 decay=0.7      // half-beat repeats, fading
+// The dotted-eighth trick: repeats land off the beat and lock back
+// in every third note, rhythm you did not play.
+echo repeats=4 beats=0.75 decay=0.65
 ```
 
 ## Try this

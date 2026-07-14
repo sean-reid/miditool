@@ -11,7 +11,11 @@ Events flow one way:
 keyboard  ->  miditool  ->  virtual port ("miditool Out")  ->  DAW
 ```
 
-miditool opens your keyboard as an input, runs every event through the effect graph described by your config, and writes the result to a virtual output port. The generator effects, [`continuum`](/miditool/effects/continuum/) through [`continuator`](/miditool/effects/continuator/), also run on a steady internal tick, so their notes keep flowing even when nothing arrives from the keyboard. To the DAW, that port looks like any other MIDI device. The processing path is allocation-free and adds no audible latency; [`miditool bench`](/miditool/reference/cli/#miditool-bench) measures the whole round trip on your machine.
+miditool opens your keyboard as an input, runs every event through the effect graph described by your config, and writes the result to a virtual output port. To the DAW, that port looks like any other MIDI device. The processing path is allocation-free and adds no audible latency; [`miditool bench`](/miditool/reference/cli/#miditool-bench) measures the whole round trip on your machine.
+
+## Generators
+
+Six effects generate as well as transform: [`continuum`](/miditool/effects/continuum/), [`mechanico`](/miditool/effects/mechanico/), [`metronome-swarm`](/miditool/effects/metronome-swarm/), [`brownian-walker`](/miditool/effects/brownian-walker/), [`continuator`](/miditool/effects/continuator/), and [`crippled-looper`](/miditool/effects/crippled-looper/) run on their own internal clocks, so their notes keep flowing even when nothing arrives from the keyboard. They share one discipline. Each clock is seeded and deterministic. When ticks run late, the machine catches up a bounded amount and skips or defers the rest, so time never bunches. Every note a generator starts carries its own note-off, and leaving the scene cleans up: `switch="kill"` silences immediately, while the default let-ring switch lets sounding notes drain at their own pace.
 
 ## Seeded determinism
 

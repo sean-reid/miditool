@@ -2626,10 +2626,10 @@ fn machines_example_parses_exactly() {
                             gate: 0.5,
                             seed: 3,
                         },
-                        EffectSpec::VelocityCurve {
-                            gamma: 0.7,
-                            floor: 1,
-                            ceiling: 110,
+                        EffectSpec::DensityGovernor {
+                            seed: 8,
+                            target: 12.0,
+                            window: TimeSpec::Millis(2000.0),
                         },
                     ],
                 },
@@ -3033,11 +3033,10 @@ fn harmony_example_parses_exactly() {
                             direction: TDirection::Superior,
                             level: 0.7,
                         },
-                        EffectSpec::FeldmanField {
+                        EffectSpec::AntiAccent {
                             seed: 3,
-                            floor: 6,
-                            ceiling: 22,
-                            jitter: 3,
+                            level: 36,
+                            every: TimeSpec::Millis(60000.0),
                         },
                     ],
                 },
@@ -3053,16 +3052,10 @@ fn harmony_example_parses_exactly() {
                             hi: 79,
                             include_played: false,
                         },
-                        EffectSpec::VelocityCurve {
-                            gamma: 1.2,
-                            floor: 1,
-                            ceiling: 96,
-                        },
-                        EffectSpec::Echo {
-                            repeats: 3,
-                            time: TimeSpec::Beats(1.0),
-                            decay: 0.55,
-                            transpose: 0,
+                        EffectSpec::MassCrescendo {
+                            period: TimeSpec::Millis(120000.0),
+                            depth: 0.55,
+                            shape: CrescendoShape::Arch,
                         },
                     ],
                 },

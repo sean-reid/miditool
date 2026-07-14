@@ -5,11 +5,11 @@ description: Ligeti's clockwork looms. Keys latch onto a relentless pulse grid a
 
 `mechanico` latches your keys into a machine that re-strikes them in lockstep.
 
-The model is the clockwork loom of Ligeti's mechanico writing, *Continuum*'s harder sibling: obsessive equal pulses hammered until the mechanism wears out. Each note-on latches the played key into the loom, up to 12 keys; from then on the whole loom is re-struck together every `pulse`, each strike sounding for half the pulse at the velocity you latched with. Each key dies after `repeats` strikes. Re-striking a latched key resets its count, velocity, and age. The first pulse lands on the note-on that wakes the empty loom; later keys join at the next pulse, always in lockstep. A 13th key evicts the oldest, silently. And the machine jams: with probability `jam` per pulse the loom stutters, skipping that pulse in silence and lurching the next one in 50% early, half a pulse instead of a whole one.
+Obsessive equal pulses hammered until the mechanism wears out: that is the clockwork loom of Ligeti's mechanico writing, *Continuum*'s harder sibling. Each note-on latches the played key into the loom, up to 12 keys; from then on the whole loom is re-struck together every `pulse`, each strike sounding for half the pulse at the velocity you latched with. Each key dies after `repeats` strikes. Re-striking a latched key resets its count, velocity, and age. The first pulse lands on the note-on that wakes the empty loom; later keys join at the next pulse, always in lockstep. A 13th key evicts the oldest, silently. And the machine jams: with probability `jam` per pulse the loom stutters, skipping that pulse in silence and lurching the next one in 50% early, half a pulse instead of a whole one.
 
 Note-ons are consumed into the loom, and note-offs are consumed and ignored: the loom owns every duration, and your release changes nothing. Everything else passes.
 
-Like the other generators, the loom runs on its own clock rather than waiting for input, and the jams are seeded: the same seed and the same playing grind through the same stutters; see [Seeds](/miditool/configuration/seeds/). If ticks run late, the loom runs at most 2 catch-up pulses and then skips the missed ones (they draw no jam and spend no strikes), so time never bunches. The loom stops cleanly on a scene switch and on shutdown; every strike carries its own note-off.
+The loom is a [generator](/miditool/how-it-works/#generators): it runs on its own seeded clock, the same seed and the same playing grinding through the same jams, and cleans up on a scene switch.
 
 ## Parameters
 
@@ -18,7 +18,7 @@ Like the other generators, the loom runs on its own clock rather than waiting fo
 | Parameter | Type | Default | Range |
 | --- | --- | --- | --- |
 | `pulse` | duration string | `"150ms"` | at least `50ms` |
-| `beats` | number | none (instead of `pulse`) | finite, greater than 0 |
+| `beats` | number | none (instead of `pulse`) | finite, at least `50ms` once resolved |
 | `repeats` | integer | `16` | `1..=64` strikes per key |
 | `jam` | number | `0.1` | `0..=0.5` probability per pulse |
 | `seed` | integer | `0` | any unsigned 64-bit value |

@@ -5,7 +5,7 @@ description: Ratchet each note into a burst of rapid hits, with gaps that stretc
 
 `stutter` ratchets each note into a burst of rapid hits.
 
-One key press becomes `repeats` attacks in quick succession. The first gap lasts `first`, and each following gap is scaled by `curve`: above 1 the burst decelerates, like a ball settling; below 1 it accelerates into a buzz; at exactly 1 it is a strict ratchet. On a percussive DAW instrument this is drum-machine ratcheting from a piano keyboard; on sustained sounds it turns lines into tremolo figures.
+Your note passes as played, and `repeats` re-attacks follow it in quick succession: one press, `repeats + 1` hits. The first gap lasts `first`, and each following gap is scaled by `curve`: above 1 the burst decelerates, like a ball settling; below 1 it accelerates into a buzz; at exactly 1 it is a strict ratchet. On a percussive DAW instrument this is drum-machine ratcheting from a piano keyboard; on sustained sounds it turns lines into tremolo figures.
 
 ## Parameters
 
@@ -23,9 +23,13 @@ Exactly one of `first=` or `beats=` must be given; see [Time and tempo](/miditoo
 ```kdl title="miditool.kdl"
 input "Roland"
 output virtual="miditool Out"
+tempo 100
 
-stutter repeats=6 first="30ms" curve=1.0     // an even six-hit ratchet
+stutter repeats=6 beats=0.25           // seven hits, a sixteenth apart
+velocity-dice seed=3 sigma=8.0         // roughen the ratchet's surface
 ```
+
+The dice keep the burst from sounding machine-flat: each hit lands a shade harder or softer than the last.
 
 ## Try this
 

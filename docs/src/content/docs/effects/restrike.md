@@ -1,11 +1,11 @@
 ---
 title: restrike
-description: Re-strike held notes on a jittered interval, fading toward a floor velocity. Hold a chord and it breathes.
+description: Re-touch every note on a jittered interval, fading toward a floor velocity. Strike a chord once and it keeps returning, softer each time.
 ---
 
-`restrike` re-strikes the notes you hold, on a loose pulse, each strike softer than the last.
+`restrike` re-touches every note you play, on a loose pulse, each strike softer than the last.
 
-Hold a chord and it does not just sit there: it returns, slightly off the grid (`jitter`), a little quieter each time (`decay`), settling toward a whisper (`floor`) until its strikes run out (`max`) or you release. Long tones become slow pulsations; a held cluster becomes a texture that breathes. The lineage is Morton Feldman: soft attacks repeating irregularly at the edge of audibility, patient rather than rhythmic.
+Strike a chord and it does not just decay: it returns, slightly off the grid (`jitter`), a little quieter each time (`decay`), settling toward a whisper until it fades below `floor` or its strikes run out (`max`). The whole series is set the moment the note sounds, each return a short self-contained touch; your release ends only the original note, and the returns keep arriving as they fade, whether or not you are still holding. The lineage is Morton Feldman: soft attacks repeating irregularly at the edge of audibility, patient rather than rhythmic.
 
 The jitter is seeded, so a take's timing is [reproducible](/miditool/configuration/seeds/).
 
@@ -32,7 +32,7 @@ output virtual="miditool Out"
 restrike seed=9 interval="2s" jitter=0.2
 ```
 
-Hold anything for more than two seconds and it starts to pulse.
+Touch a note and let it go; it comes back every two seconds or so, dying away.
 
 ## Try this
 

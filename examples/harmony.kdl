@@ -4,24 +4,23 @@
 // Note-valued properties (root=, tonic=, start=) take a note name like
 // "a", "f#", or "bb", or a pitch class 0..11.
 
-input "Roland"
+input "Roland"                       // a substring of your keyboard's port name; `miditool ports` lists them
 output virtual="miditool Harmony"
 
 tempo 66                             // beats= times below follow this
 
 // Every melody note brings its bell: the nearest A minor triad tone
-// above it, at a fraction of the touch, while the field keeps the
-// whole thing to a whisper.
+// above it, at a fraction of the touch. The governor holds it all
+// quiet but lets one true accent through each minute.
 scene "part" {
     tintinnabuli root="a" minor=true position=1 direction="superior" level=0.7
-    feldman-field seed=3 floor=6 ceiling=22 jitter=3
+    anti-accent level=36 every="60s" seed=3
 }
 
 // Each note takes one more step from C major, relative then leading
-// tone, around and around; the curve tames the triads and the echoes
-// let each station ring into the next.
+// tone, around and around, while a two-minute tide lifts and lowers
+// the whole drift: harmony that wanders inside dynamics that arch.
 scene "tonnetz drift" {
     tonnetz start="c" minor=false sequence="rl" lo=48 hi=79
-    velocity-curve gamma=1.2 ceiling=96
-    echo repeats=3 beats=1 decay=0.55
+    mass-crescendo period="120s" depth=0.55 shape="arch"
 }

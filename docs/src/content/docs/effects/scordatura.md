@@ -11,7 +11,7 @@ This is a prepared tuning, the keyboard cousin of a scordatura string or a bolt 
 
 Detuned classes are re-emitted through the MPE voice pool at their own key with the mapped cents as a per-note pitch bend. Zero-cents classes pass through completely untouched, on their original channel, with no pool voice spent on them, so a map that only bends two classes leaves the other ten exactly as your keyboard sent them. The map is deterministic, no seed.
 
-Each note-off follows whichever path its note-on took, dry or tuned, so releases stay exact even though the two paths live on different channels; a retrigger cuts first, and a scene switch releases everything and resets the bends.
+Each note-off follows whichever path its note-on took, dry or tuned, so releases stay exact even though the two paths live on different channels; a retrigger cuts first, and a `switch="kill"` scene change or shutdown releases everything and resets the bends (a let-ring switch lets the outgoing notes drain on their own).
 
 ## Parameters
 
@@ -21,7 +21,7 @@ Each note-off follows whichever path its note-on took, dry or tuned, so releases
 | `channels` | channel span | `"2-16"` | `"1"`..`"16"`, low end first |
 | `bend-range` | semitones | `48` | `1..=96` |
 
-`channels` and `bend-range` are the MPE tail shared by all four microtonal effects; the [Microtonality guide](/miditool/guides/microtonality/) explains how to set them.
+`channels` and `bend-range` are the MPE tail shared by all four microtonal effects.
 
 ## Example
 

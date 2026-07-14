@@ -29,7 +29,9 @@ output virtual="miditool Out"
 
 tempo 120
 
-quantize beats=0.25            // snap onsets to a sixteenth-note grid
+// Full snap is a drum machine. At 0.7 a third of your rubato
+// survives, and the grid reads as feel rather than correction.
+quantize beats=0.25 strength=0.7
 ```
 
 ## Try this

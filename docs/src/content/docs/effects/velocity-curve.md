@@ -1,13 +1,13 @@
 ---
 title: velocity-curve
-description: Reshape touch with a gamma curve. Lift soft playing, compress hard playing, and confine velocities to a floor and ceiling.
+description: Reshape touch with a gamma curve rescaled into a floor and ceiling. Lift soft playing, tame hard playing, or flatten dynamics entirely.
 ---
 
 `velocity-curve` reshapes note-on velocities through a gamma curve.
 
-It is the touch control miditool's random effects often need: a scrambled or scattered keyboard invites harder playing than usual, and a gentle curve keeps the result musical. Gamma below 1 lifts soft playing (quiet notes speak more easily); gamma above 1 compresses it (the instrument demands more deliberate weight). `floor` and `ceiling` then confine the result, which is also the quickest way to flatten dynamics entirely for organ- or harpsichord-like behavior.
+It is the touch control miditool's random effects often need: a scrambled or scattered keyboard invites harder playing than usual, and a gentle curve keeps the result musical. Gamma below 1 lifts soft playing (quiet notes speak more easily); gamma above 1 tames it (the instrument demands more deliberate weight).
 
-The mapping is `v -> (v/127)^gamma * 127`, clamped into `floor..=ceiling`. Only note-on velocities are touched; note-offs and controllers pass through.
+The mapping is `floor + (ceiling - floor) * (v/127)^gamma`, rounded and clamped into `1..=127`. `floor` and `ceiling` are not a clamp: they rescale the whole curve, so the full sweep of your touch spreads across `floor..=ceiling`, and setting them equal flattens dynamics entirely. Only note-on velocities are touched; note-offs and controllers pass through.
 
 ## Parameters
 
@@ -23,13 +23,14 @@ The mapping is `v -> (v/127)^gamma * 127`, clamped into `floor..=ceiling`. Only 
 input "Roland"
 output virtual="miditool Out"
 
-shuffle-lock seed=42
-velocity-curve gamma=0.8            // lift the soft end a little
+velocity-curve floor=88 ceiling=88      // every note at 88, however struck
 ```
+
+A harpsichord's indifference: the key speaks at one level no matter how it is hit, and all the expression left is timing.
 
 ## Try this
 
-Terrace the dynamics like a harpsichord: everything sounds at one of two levels, depending on how hard you play.
+Terrace the dynamics instead: two fixed levels, chosen by how hard you play.
 
 ```kdl
 fork {
@@ -43,3 +44,5 @@ fork {
     }
 }
 ```
+
+Then loosen it again: `velocity-curve gamma=0.8` alone lifts the soft end a little and leaves the rest of your touch as it was.

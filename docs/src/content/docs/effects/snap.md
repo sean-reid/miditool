@@ -34,11 +34,11 @@ snap division=2 strength=0.7 follow=0.4
 
 ## Try this
 
-Triplets against your own hands. Snap to a triplet grid at full strength, then echo on the inferred half beat: the repeats land inside a meter you implied but never played.
+Meet the two ends of `follow`. At 0.1 the grid is a stubborn drummer: it finds your tempo once and holds it while you push against it. Flip to 0.9 and it breathes with every phrase, erasing only the smallest unevenness. Play the same passage through both and you will hear what your rubato is made of.
 
 ```kdl
-tempo 96
+snap division=2 strength=1.0 follow=0.1
 
-snap division=3 strength=1.0 follow=0.3
-echo repeats=3 beats=0.5 decay=0.6
+// ...then edit to:
+// snap division=2 strength=1.0 follow=0.9
 ```

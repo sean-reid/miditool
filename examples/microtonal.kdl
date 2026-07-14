@@ -5,7 +5,7 @@
 // with a per-note pitch bend, so set the receiving instrument to MPE
 // mode with its pitch-bend range matching bend-range=48.
 
-input "Roland"
+input "Roland"                       // a substring of your keyboard's port name; `miditool ports` lists them
 output virtual="miditool Microtonal"
 
 tempo 60                             // beats= times below follow this

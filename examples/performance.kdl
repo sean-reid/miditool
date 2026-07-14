@@ -4,9 +4,9 @@
 // sit at the ends of the piano, out of the music's way, and never
 // reach the effects.
 //
-// Everything random is seeded, so the same playing gives the same music.
+// Seeds fix every random choice, so a rehearsed set stays rehearsed.
 
-input "Roland"
+input "Roland"                       // a substring of your keyboard's port name; `miditool ports` lists them
 output virtual="miditool Performance"
 
 tempo 90

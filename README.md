@@ -8,7 +8,7 @@ Built for live performance on an 88-key piano: the processing path is allocation
 
 ## Status
 
-Early but real: the engine, nine effects, scenes, hot reload, and the phone remote all work. Much more is planned, including scriptable effects and a large catalog drawn from 20th century composition techniques.
+Active and playable. The catalog spans pitch scramblers, serial engines, sieves, stochastic clouds, clusters, rhythm and dynamics machines, harmonizers, MPE microtonality, self-playing generators, and pedal-driven form effects, with Luau scripting for whatever is not built in. Scenes switch from the keyboard, a pedal, a phone, or on their own clock; configs hot-reload while you play.
 
 ## Quick start
 

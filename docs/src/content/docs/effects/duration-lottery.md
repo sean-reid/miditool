@@ -7,7 +7,7 @@ description: Each note's length is drawn from a seeded lottery and your release 
 
 Durations stop being something you perform and become something dealt, the way a Feldman page fixes them on paper regardless of the pianist's instinct, or a Xenakis screen draws them from a law. Each note-on is emitted together with a note-off already scheduled at the drawn length: exponential around `mean` by default (most notes short, the occasional one that stays), or flat across the range with `spread="uniform"`; either way the draw is clamped into `min..max`.
 
-Your own release is ignored: letting go of the key does nothing, the drawn duration ends the note. Because every note-on leaves with its note-off scheduled in the same breath, note-ons and note-offs always balance and nothing can hang, however you play; retriggering a held key simply stacks another drawn note on it. The lottery is seeded: the same seed and the same playing deal the same lengths, forever; see [Seeds](/miditool/configuration/seeds/).
+Your own release is ignored: letting go of the key does nothing, the drawn duration ends the note. Because every note-on leaves with its note-off scheduled in the same breath, note-ons and note-offs always balance and nothing can hang; retriggering a held key stacks another drawn note on it. The lottery is seeded: the same seed and the same playing deal the same lengths, forever; see [Seeds](/miditool/configuration/seeds/).
 
 ## Parameters
 

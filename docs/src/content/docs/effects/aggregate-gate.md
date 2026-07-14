@@ -5,7 +5,7 @@ description: Each pitch class sounds once until all twelve have arrived, then th
 
 `aggregate-gate` lets each pitch class through once; repeats are dropped until all twelve have sounded.
 
-This is Schoenberg's aggregate discipline made into a gate: no pitch class returns before the chromatic collection is complete. The note that completes the aggregate still sounds, then the slate wipes and all twelve are available again. Playing through it becomes a game of spending pitch classes; vamp on three chords and the gate thins them to whichever pitch classes are still unspent, forcing your hands toward the notes you have been avoiding.
+Schoenberg ran his rows on this discipline: no pitch class returns before the chromatic collection is complete. Here it is a gate on your own playing, and the effect on tonal habits is immediate: repeat a note too soon and the gate swallows it, so vamping turns into circulation whether you meant it or not.
 
 `leak` loosens the rule: that fraction of repeats slips through anyway, on a seeded draw, sliding the effect from strict serialism toward free chromaticism. The same seed leaks the same notes forever; see [Seeds](/miditool/configuration/seeds/). A dropped note-on takes its note-off with it, so nothing is left hanging.
 
@@ -22,7 +22,11 @@ This is Schoenberg's aggregate discipline made into a gate: no pitch class retur
 input "Roland"
 output virtual="miditool Out"
 
-aggregate-gate               // strict: no pitch class returns early
+// Vamp two chords. The gate lets each pitch class speak once per
+// cycle, the scatter throws the survivors across six octaves: the
+// leftovers of a I-IV vamp turn Webern.
+aggregate-gate
+registral-scatter seed=12 lo=30 hi=102
 ```
 
 ## Try this

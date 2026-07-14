@@ -5,9 +5,9 @@ description: Lock notes to a repeating cycle of durations, the medieval talea. Y
 
 `talea` locks your notes to a repeating cycle of durations.
 
-The talea is the rhythmic engine of the isorhythmic motet: Vitry and Machaut cycled a fixed row of durations beneath a repeating row of pitches, the two drifting out of phase, and Messiaen revived the device in the *Liturgie de cristal* that opens the Quatuor pour la fin du temps, where duration cycles run under the music as if they had been running forever. Here the cycle is yours to write: each note-on takes the next duration from the list, wrapping around, and its note-off is scheduled then and there.
+The talea is the rhythmic engine of the isorhythmic motet: Vitry and Machaut cycled a fixed row of durations beneath a repeating row of pitches, the two drifting out of phase. Messiaen revived the device in the *Liturgie de cristal* that opens the Quatuor pour la fin du temps, where duration cycles run under the music as if they had been running forever. Here the cycle is yours to write: each note-on takes the next duration from the list, wrapping around, and its note-off is scheduled then and there.
 
-Your own release does nothing: letting go of the key does nothing, the cycle has already fixed when the note ends. Because every note-on leaves with its note-off scheduled in the same breath, note-ons and note-offs always balance and nothing can hang; retriggering a held key simply stacks another note with its own scheduled end.
+Your release is ignored: the cycle has already fixed when the note ends. Every note-on leaves with its note-off already scheduled, so note-ons and note-offs always balance and nothing can hang; retriggering a held key stacks another note with its own scheduled end.
 
 ## Parameters
 
@@ -23,17 +23,12 @@ The durations are bare arguments, one to 32 of them. Plain numbers are milliseco
 ```kdl title="miditool.kdl"
 input "Roland"
 output virtual="miditool Out"
+tempo 90
 
-talea 250 500 250 1000        // a four-duration rhythmic row, in milliseconds
+talea 1 0.75 0.75 1 beats=true      // a 3.5-beat cycle
 ```
 
-The same line, spelled in beats:
-
-```kdl title="miditool.kdl"
-tempo 120
-
-talea 0.5 1 0.5 2 beats=true
-```
+Three and a half beats per cycle: against a 4/4 count the row lands half a beat earlier on every pass, crossing the barline on its own schedule, the isorhythmic drift built in. Without `beats=true` the entries are milliseconds: `talea 250 500 250 1000`.
 
 ## Try this
 

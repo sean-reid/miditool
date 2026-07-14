@@ -253,11 +253,13 @@ effects
       Fading repeats after each note, every repeat decay times softer
       and shifted by transpose semitones.
   restrike seed=<u64> interval=\"2s\" jitter=0.15 decay=0.7 floor=8 max=12
-      Re-strike held notes on a jittered interval, fading toward the
-      floor velocity, at most max strikes per note.
+      Each note is quietly touched again on a jittered interval, the
+      whole fading series set at the moment you strike; your release
+      ends only the original note.
   stutter repeats=6 first=\"30ms\" curve=1.0
-      Ratchet each note into a burst: gaps start at first, then stretch
-      (curve above 1) or tighten (below 1) as the burst plays out.
+      Ratchet each note into a burst: the note plus repeats re-attacks,
+      gaps starting at first, stretching (curve above 1) or tightening
+      (below 1) as the burst plays out.
   euclidean-gate k=3 n=8 rotation=0 pulse=\"125ms\" mode=\"defer\"
       Gate notes through a Euclidean rhythm: k pulses spread evenly
       over n steps of pulse length (default a quarter beat). Off-step

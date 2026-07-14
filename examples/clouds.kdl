@@ -4,7 +4,7 @@
 //
 // Everything random is seeded, so the same playing gives the same music.
 
-input "Roland"
+input "Roland"                       // a substring of your keyboard's port name; `miditool ports` lists them
 output virtual="miditool Clouds"
 
 tempo 84                             // beats= times below follow this

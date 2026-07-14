@@ -5,7 +5,7 @@ description: Ring modulation for notes. Each key becomes its sum and difference 
 
 `ring-mod` ring-modulates every note against a fixed carrier key.
 
-This is the electronics of Stockhausen's *Mantra*, a piano fed through ring modulators, reduced to notes: the played key and the carrier become frequencies, and their sum and absolute difference come back as the nearest MIDI keys. Intervals consonant with the carrier return consonant partners; everything else comes back as clangorous, bell-like combinations. `dry=true` keeps the played note alongside its components.
+In *Mantra*, Stockhausen fed two pianos through ring modulators; this effect is that electronics reduced to notes: the played frequency and a carrier combine, and what comes out is their sum and difference, metallic where the originals were plain.
 
 Every emitted component gets its own note-off, and a retrigger cuts the whole set first, so nothing sticks. Components that fall off the keyboard are dropped; components of one note that land on the same key sound once.
 

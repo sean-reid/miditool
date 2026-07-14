@@ -5,7 +5,7 @@ description: Every note-on gambles on a seeded coin, passed through, replaced by
 
 `note-roulette` spins a seeded wheel for every note: keep it, replace it, or lose it.
 
-This is the chance operation as Cage practiced it, deciding note by note what would sound by coin toss rather than taste. Each note-on tosses one: with probability `pass` the note goes through untouched, with probability `replace` it becomes a uniformly random key in `lo..hi`, and the remainder falls silent. Your phrasing survives as rhythm and touch; pitch and presence come from the wheel.
+A coin decides each note, which is the chance operation as Cage practiced it: pass, replace, or silence, drawn fresh at every note-on, with your rhythm and touch left exactly as played.
 
 The outcome is remembered per held note, so the matching note-off lands on whatever the wheel chose, and a silenced note takes its note-off with it: nothing hangs. The wheel is seeded: the same seed and the same playing land on the same outcomes, forever; see [Seeds](/miditool/configuration/seeds/).
 

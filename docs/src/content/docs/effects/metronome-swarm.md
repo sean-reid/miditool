@@ -5,11 +5,11 @@ description: Ligeti's Poeme symphonique scaled to the keyboard. Every key winds 
 
 `metronome-swarm` winds up a metronome every time you touch a key.
 
-The model is Ligeti's *Poeme symphonique* for 100 metronomes, wound up together and left to run down out of phase, here scaled to 16. Each note-on winds an independent metronome on the played key: its tempo is a seeded uniform draw between `bpm-lo` and `bpm-hi`, its first strike sounds immediately at your velocity, and every later strike lands `fade` times softer than the last, never below 1. A metronome runs down after `max` strikes, or the moment your note-off for that key arrives, whichever comes first: your release stops that key's metronomes. When a 17th metronome starts, it steals the slot of the oldest, which is already silent between strikes, so the steal makes no sound.
+A hundred metronomes wound up together and left to run down out of phase made Ligeti's *Poeme symphonique*; this swarm is scaled to 16 and wound by your fingers. Each note-on winds an independent metronome on the played key: its tempo is a seeded uniform draw between `bpm-lo` and `bpm-hi`, its first strike sounds immediately at your velocity, and every later strike lands `fade` times softer than the last, never below 1. A metronome runs down after `max` strikes, or the moment your note-off for that key arrives, whichever comes first: your release stops that key's metronomes. When a 17th metronome starts, it steals the slot of the oldest, which is already silent between strikes, so the steal makes no sound.
 
 Note-ons and note-offs are consumed; only the swarm's strikes reach the output, and everything else passes.
 
-Like the other generators, the swarm runs on its own clock rather than waiting for input, and it is seeded: the same seed and the same playing wind up the same swarm; see [Seeds](/miditool/configuration/seeds/). If ticks run late, each metronome catches up at most 2 strikes and then drops the missed beats (they do not count against `max`), so time never bunches. The swarm stops cleanly on a scene switch and on shutdown; every strike carries its own note-off.
+The swarm is a [generator](/miditool/how-it-works/#generators): it runs on its own seeded clock, the same seed and the same playing winding up the same swarm, and cleans up on a scene switch.
 
 ## Parameters
 

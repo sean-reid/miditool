@@ -11,7 +11,7 @@ Think of one long string tuned to `fundamental`, and the pedal as your hand deci
 
 The effect knows when to give up: a note below the fundamental, a note with no partial within 6 semitones (the gaps between low partials are wide), or a snap that would leave the keyboard passes through dry instead of being wrenched onto the series. Pedal up, everything passes dry and the keyboard is a normal keyboard again. The snapping is deterministic, no seed.
 
-Each note remembers whether it went out dry or tuned, so its note-off releases the right note even when the pedal moved between the press and the release; a retrigger cuts first, and a scene switch releases everything and resets the bends.
+Each note remembers whether it went out dry or tuned, so its note-off releases the right note even when the pedal moved between the press and the release; a retrigger cuts first, and a `switch="kill"` scene change or shutdown releases everything and resets the bends (a let-ring switch lets the outgoing notes drain on their own).
 
 ## Parameters
 
@@ -22,7 +22,7 @@ Each note remembers whether it went out dry or tuned, so its note-off releases t
 | `channels` | channel span | `"2-16"` | `"1"`..`"16"`, low end first |
 | `bend-range` | semitones | `48` | `1..=96` |
 
-`channels` and `bend-range` are the MPE tail shared by all four microtonal effects; the [Microtonality guide](/miditool/guides/microtonality/) explains how to set them.
+`channels` and `bend-range` are the MPE tail shared by all four microtonal effects.
 
 ## Example
 

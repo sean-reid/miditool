@@ -5,11 +5,11 @@ description: The random walks of Xenakis's Mists. Each note plants a wanderer th
 
 `brownian-walker` sends every note you play wandering off on its own.
 
-The model is the pitch random walks of Xenakis's *Mists*, lines that drift by chance instead of by scale. Each note-on plants a walker: it sounds the played key immediately at your velocity, then every `interval` it steps a Gaussian-drawn distance (`sigma` semitones wide, rounded), sounding wherever it lands. Steps are legato, the note-off of the previous key and the note-on of the next stamped together, so a walker is one continuous voice. The walls at `lo` and `hi` reflect: a walker that would step past them folds back into range. Your note-off for the planted key recalls its walker, releasing whatever it is currently sounding. Up to 8 walkers roam at once; a 9th steals the oldest, releasing its current key first.
+Lines that drift by chance instead of by scale run all through Xenakis's *Mists*; here, each of your notes starts one. Each note-on plants a walker: it sounds the played key immediately at your velocity, then every `interval` it steps a Gaussian-drawn distance (`sigma` semitones wide, rounded), sounding wherever it lands. Steps are legato, the note-off of the previous key and the note-on of the next stamped together, so a walker is one continuous voice. The walls at `lo` and `hi` reflect: a walker that would step past them folds back into range. Your note-off for the planted key recalls its walker, releasing whatever it is currently sounding. Up to 8 walkers roam at once; a 9th steals the oldest, releasing its current key first.
 
 Note-ons and note-offs are consumed; only the walkers' voices reach the output, and everything else passes.
 
-Like the other generators, the walkers run on their own clock rather than waiting for input, and the walk is seeded: the same seed and the same playing wander the same paths; see [Seeds](/miditool/configuration/seeds/). If ticks run late, each walker takes at most 2 catch-up steps and then skips the rest, so time never bunches. Everything stops cleanly on a scene switch and on shutdown; nothing is left sounding.
+The walkers are [generators](/miditool/how-it-works/#generators): they run on their own seeded clock, the same seed and the same playing wandering the same paths, and clean up on a scene switch.
 
 ## Parameters
 

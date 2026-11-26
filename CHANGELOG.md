@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.14](https://github.com/sean-reid/miditool/compare/v0.1.13...v0.1.14) (2026-11-26)
+
+
+### Bug Fixes
+
+* point the docs links at seanre.id/miditool ([#19](https://github.com/sean-reid/miditool/issues/19)) ([f0241ff](https://github.com/sean-reid/miditool/commit/f0241ff37aef1d4d37c3699b0dadb9c3a0e8b951))
+* use try_update for the client slot counter ([#17](https://github.com/sean-reid/miditool/issues/17)) ([9617fcc](https://github.com/sean-reid/miditool/commit/9617fccc82b21b59c8f1bf83dcaa8e168937bdb4))
+
 ## [0.1.13](https://github.com/sean-reid/miditool/compare/v0.1.12...v0.1.13) (2026-07-14)
 
 

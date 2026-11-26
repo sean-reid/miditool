@@ -290,7 +290,7 @@ impl ClientSlot {
     fn take(state: Arc<AppState>) -> Option<ClientSlot> {
         state
             .clients
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < MAX_CLIENTS).then_some(n + 1)
             })
             .ok()

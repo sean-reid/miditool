@@ -3,7 +3,7 @@ import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
 export default defineConfig({
-  site: "https://sean-reid.github.io",
+  site: "https://seanre.id",
   base: "/miditool",
   // Bare section URLs land on each section's first page. Destinations
   // carry the base by hand: Astro does not prepend it for redirects.

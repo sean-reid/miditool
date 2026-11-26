@@ -18,7 +18,7 @@ const SCRIPT_TEMPLATE: &str = r#"-- A miditool script. Wire it into a config wit
 -- one event, or an array of tables to emit several. Globals persist
 -- across events, and rng() / rng_range(lo, hi) draw deterministically
 -- from the seed on the script node. Full reference:
--- https://sean-reid.github.io/miditool/configuration/scripting/
+-- https://seanre.id/miditool/configuration/scripting/
 
 -- A wedge mirror: every note lands as far above the axis as it was
 -- played below it, and vice versa. Note-offs mirror the same way, so
@@ -58,7 +58,7 @@ end
 /// The starter config: input hint, the default output spelled out, one
 /// seeded effect to edit.
 const CONFIG_TEMPLATE: &str = r#"// A miditool config. `miditool run` reads ./miditool.kdl, or pass a path.
-// `miditool effects` lists every node; docs: https://sean-reid.github.io/miditool/
+// `miditool effects` lists every node; docs: https://seanre.id/miditool/
 
 // input "Roland"                // optional: substring of the input port
 //                               // name; `miditool ports` lists them
@@ -76,7 +76,7 @@ pub fn script(name: &str, dir: &Path) -> anyhow::Result<()> {
     write_fresh(&path, SCRIPT_TEMPLATE)?;
     eprintln!("wrote {}", path.display());
     eprintln!("next: add `script \"{file}\" seed=1` to your config, then `miditool run`.");
-    eprintln!("the event reference: https://sean-reid.github.io/miditool/configuration/scripting/");
+    eprintln!("the event reference: https://seanre.id/miditool/configuration/scripting/");
     Ok(())
 }
 
@@ -85,7 +85,7 @@ pub fn script(name: &str, dir: &Path) -> anyhow::Result<()> {
 const HOME_CONFIG_TEMPLATE: &str = r#"// Your miditool config. `miditool run` reads this file when there is no
 // ./miditool.kdl in the working directory and no path on the command line.
 // Every line below is optional; as written, MIDI passes through untouched.
-// `miditool effects` lists every node; docs: https://sean-reid.github.io/miditool/
+// `miditool effects` lists every node; docs: https://seanre.id/miditool/
 
 // Pick your keyboard by name substring (`miditool ports` lists the names).
 // On macOS, hide=true keeps apps like GarageBand from also hearing the

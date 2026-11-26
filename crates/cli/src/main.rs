@@ -161,7 +161,7 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
             if !path.exists() {
                 bail!(
                     "no config at {}{}. Pass a path or create one; `miditool effects` lists \
-                     the building blocks, and https://sean-reid.github.io/miditool/ has examples.",
+                     the building blocks, and https://seanre.id/miditool/ has examples.",
                     path.display(),
                     source.describe()
                 );
@@ -186,7 +186,7 @@ fn run(config: Option<PathBuf>) -> anyhow::Result<()> {
     let cfg = miditool_config::parse_file(&path).map_err(|e| {
         anyhow::anyhow!(
             "{e}\nrun `miditool effects` for the list of config nodes, or see \
-             https://sean-reid.github.io/miditool/"
+             https://seanre.id/miditool/"
         )
     })?;
 

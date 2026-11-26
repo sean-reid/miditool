@@ -2,7 +2,7 @@
 
 A MIDI mixing layer that sits between your keyboard and your DAW. It reads what you play, transforms it in real time, and hands the DAW a single altered stream: scrambled keys, stochastic note clouds, serial rows, velocity fields, and whatever else you can compose out of its effect graph.
 
-Documentation: https://sean-reid.github.io/miditool/
+Documentation: https://seanre.id/miditool/
 
 Built for live performance on an 88-key piano: the processing path is allocation-free and adds no audible latency, every random effect is seeded and reproducible, and note-off correctness is guaranteed even when a mapping changes while a note is held.
 
@@ -17,7 +17,7 @@ curl -fsSL https://github.com/sean-reid/miditool/releases/latest/download/midito
 miditool ports                  # find your keyboard
 ```
 
-Windows and from-source instructions are in the [docs](https://sean-reid.github.io/miditool/getting-started/).
+Windows and from-source instructions are in the [docs](https://seanre.id/miditool/getting-started/).
 
 A config is a KDL file describing an effect chain. Save this as `miditool.kdl`, then `miditool run`:
 

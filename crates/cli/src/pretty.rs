@@ -331,7 +331,7 @@ takes \"250ms\" or \"1.5s\", or beats=0.5 against the tempo. Note-valued
 properties (root=, tonic=, start=) take a note name like \"c\", \"f#\",
 or \"bb\", or a pitch class 0..11. Randomness is deterministic: the same seed
 always gives the same result. The script node's Lua API is documented at
-https://sean-reid.github.io/miditool/configuration/scripting/.
+https://seanre.id/miditool/configuration/scripting/.
 ";
 
 #[cfg(test)]
